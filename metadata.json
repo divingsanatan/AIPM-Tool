@@ -1,0 +1,6 @@
+{
+  "name": "PMI Project Management Studio",
+  "description": "PMI-aligned project management platform featuring EVM (CPI & SPI), hierarchical WBS, integrated RAID & RACI logs, Change Management, stakeholder hourly cost analytics, and AI NLP project intelligence.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
