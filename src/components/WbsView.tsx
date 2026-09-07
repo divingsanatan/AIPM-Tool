@@ -7,6 +7,7 @@ import {
   ProjectDocument,
   PriorityLevel,
   GlobalFilterState,
+  StatusConfig,
 } from "../types";
 import {
   Plus,
@@ -39,10 +40,19 @@ import {
 import {
   generateNextWbsChildCode,
   suggestChildType,
+  getChildTypeLabel,
+  getHierarchyLevelInfo,
+  getWbsTypeFriendlyName,
   getParentId,
 } from "../utils/wbsRollup";
 import { getItemPriority } from "../utils/filterUtils";
+import {
+  DEFAULT_STATUS_CONFIGS,
+  getStatusConfig,
+  getProgressForStatus,
+} from "../utils/statusConfig";
 import { WbsCleanTree } from "./WbsCleanTree";
+import { MultiStakeholderSelect } from "./MultiStakeholderSelect";
 
 interface WbsViewProps {
   wbsItems: WbsItem[];
@@ -54,6 +64,10 @@ interface WbsViewProps {
   onBatchAddWbsItems: (items: WbsItem[]) => void;
   globalFilter?: GlobalFilterState;
   onUpdateGlobalFilter?: (updates: Partial<GlobalFilterState>) => void;
+  statusConfigs?: StatusConfig[];
+  onUpdateStatusConfigs?: (configs: StatusConfig[]) => void;
+  onSyncAllTasks?: () => void;
+  onApplyStatusProgressToTasks?: (statusKey: string, newProgress: number) => void;
 }
 
 export const WbsView: React.FC<WbsViewProps> = ({
@@ -66,6 +80,10 @@ export const WbsView: React.FC<WbsViewProps> = ({
   onBatchAddWbsItems,
   globalFilter,
   onUpdateGlobalFilter,
+  statusConfigs = DEFAULT_STATUS_CONFIGS,
+  onUpdateStatusConfigs,
+  onSyncAllTasks,
+  onApplyStatusProgressToTasks,
 }) => {
   const [filterStatus, setFilterStatus] = useState<string>("ALL");
   const [filterType, setFilterType] = useState<string>("ALL");
@@ -163,18 +181,19 @@ export const WbsView: React.FC<WbsViewProps> = ({
   const handleOpenAddSubtask = (parentItem: WbsItem) => {
     const nextCode = generateNextWbsChildCode(parentItem, wbsItems);
     const nextType = suggestChildType(parentItem.type);
+    const defaultStatus: WorkItemStatus = "To Do";
     setFormData({
       title: "",
       wbsCode: nextCode,
       type: nextType,
-      status: "To Do",
+      status: defaultStatus,
       priority: parentItem.priority || "Medium",
       parentId: parentItem.id,
       estimatedHours: 20,
       actualHours: 0,
       plannedBudget: 3000,
       actualCost: 0,
-      progressPercent: 0,
+      progressPercent: getProgressForStatus(defaultStatus, statusConfigs),
       assignedStakeholderId: parentItem.assignedStakeholderId || stakeholders[0]?.id || "",
       startDate: parentItem.startDate || new Date().toISOString().split("T")[0],
       dueDate: parentItem.dueDate || new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0],
@@ -185,41 +204,18 @@ export const WbsView: React.FC<WbsViewProps> = ({
     setIsAddModalOpen(true);
   };
 
-  // Status badges
+  // Status badges using dynamic status configuration
   const getStatusBadge = (status: WorkItemStatus) => {
-    switch (status) {
-      case "Done":
-        return (
-          <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
-            <CheckCircle2 className="h-3 w-3" /> Done
-          </span>
-        );
-      case "Demoable":
-        return (
-          <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 flex items-center gap-1">
-            <Sparkles className="h-3 w-3" /> Demoable
-          </span>
-        );
-      case "In Progress":
-        return (
-          <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-500/15 text-blue-300 border border-blue-500/30 flex items-center gap-1">
-            <Clock className="h-3 w-3" /> In Progress
-          </span>
-        );
-      case "Blocked":
-        return (
-          <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/40 flex items-center gap-1">
-            <AlertTriangle className="h-3 w-3" /> Blocked
-          </span>
-        );
-      case "To Do":
-      default:
-        return (
-          <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700 flex items-center gap-1">
-            <Layers className="h-3 w-3" /> To Do
-          </span>
-        );
-    }
+    const cfg = getStatusConfig(status, statusConfigs);
+    return (
+      <span
+        className={`px-2 py-0.5 rounded-full text-xs font-semibold flex items-center gap-1 border ${cfg.badgeBg} ${cfg.badgeText} ${cfg.badgeBorder}`}
+      >
+        <span className={`w-1.5 h-1.5 rounded-full ${cfg.dotColor}`} />
+        <span>{cfg.label}</span>
+        <span className="text-[10px] font-mono opacity-80">({cfg.progressPercent}%)</span>
+      </span>
+    );
   };
 
   // Priority badges
@@ -286,9 +282,14 @@ export const WbsView: React.FC<WbsViewProps> = ({
   const isDirectMatch = (item: WbsItem) => {
     if (activeStatus !== "ALL" && item.status !== activeStatus) return false;
     if (activeAssignee !== "ALL") {
+      const allItemAssigneeIds = [
+        ...(item.assignedStakeholderIds || []),
+        ...(item.assignedStakeholderId ? [item.assignedStakeholderId] : []),
+        ...(item.contributorStakeholderIds || []),
+      ];
       if (activeAssignee === "UNASSIGNED") {
-        if (item.assignedStakeholderId) return false;
-      } else if (item.assignedStakeholderId !== activeAssignee) {
+        if (allItemAssigneeIds.length > 0) return false;
+      } else if (!allItemAssigneeIds.includes(activeAssignee)) {
         return false;
       }
     }
@@ -320,22 +321,15 @@ export const WbsView: React.FC<WbsViewProps> = ({
     return false;
   };
 
-  // Filtered items
-  const filteredItems = wbsItems.filter((item) => {
+  // Filtered items passed to tree & views
+  const filteredItems = useMemo(() => {
     if (isGlobalFilterActive || filterType !== "ALL") {
-      return matchingItemIds.has(item.id) || hasMatchingDescendant(item.id);
-    } else {
-      let currentParentId = getParentId(item, wbsItems);
-      while (currentParentId) {
-        if (expandedParents[currentParentId] === false) {
-          return false;
-        }
-        const parentObj = wbsItems.find((i) => i.id === currentParentId);
-        currentParentId = parentObj ? getParentId(parentObj, wbsItems) : null;
-      }
-      return true;
+      return wbsItems.filter(
+        (item) => matchingItemIds.has(item.id) || hasMatchingDescendant(item.id)
+      );
     }
-  });
+    return wbsItems;
+  }, [wbsItems, isGlobalFilterActive, filterType, matchingItemIds]);
 
   const handleSaveNew = (e: React.FormEvent) => {
     e.preventDefault();
@@ -359,7 +353,15 @@ export const WbsView: React.FC<WbsViewProps> = ({
       plannedBudget: Number(formData.plannedBudget) || 0,
       actualCost: actualCost,
       progressPercent: Number(formData.progressPercent) || 0,
-      assignedStakeholderId: formData.assignedStakeholderId,
+      assignedStakeholderId: formData.assignedStakeholderId || (formData.assignedStakeholderIds?.[0] || undefined),
+      assignedStakeholderIds: formData.assignedStakeholderIds && formData.assignedStakeholderIds.length > 0
+        ? formData.assignedStakeholderIds
+        : formData.assignedStakeholderId
+        ? [formData.assignedStakeholderId]
+        : [],
+      contributorStakeholderIds: formData.assignedStakeholderIds && formData.assignedStakeholderIds.length > 1
+        ? formData.assignedStakeholderIds.slice(1)
+        : [],
       startDate: formData.startDate || new Date().toISOString().split("T")[0],
       dueDate: formData.dueDate || new Date().toISOString().split("T")[0],
       isCriticalPath: Boolean(formData.isCriticalPath),
@@ -384,6 +386,15 @@ export const WbsView: React.FC<WbsViewProps> = ({
       estimatedHours: Number(editingItem.estimatedHours) || 0,
       plannedBudget: Number(editingItem.plannedBudget) || 0,
       actualCost: updatedActualCost,
+      assignedStakeholderId: editingItem.assignedStakeholderId || (editingItem.assignedStakeholderIds?.[0] || undefined),
+      assignedStakeholderIds: editingItem.assignedStakeholderIds && editingItem.assignedStakeholderIds.length > 0
+        ? editingItem.assignedStakeholderIds
+        : editingItem.assignedStakeholderId
+        ? [editingItem.assignedStakeholderId]
+        : [],
+      contributorStakeholderIds: editingItem.assignedStakeholderIds && editingItem.assignedStakeholderIds.length > 1
+        ? editingItem.assignedStakeholderIds.slice(1)
+        : [],
     };
 
     onUpdateWbsItem(updated);
@@ -506,7 +517,7 @@ export const WbsView: React.FC<WbsViewProps> = ({
             <span className="text-[#94A3B8] font-bold text-[10px] uppercase font-mono flex items-center gap-1">
               <Filter className="h-3 w-3 text-[#38BDF8]" /> Status:
             </span>
-            {["ALL", "To Do", "In Progress", "Demoable", "Blocked", "Done"].map((st) => (
+            {["ALL", "Done", "Demoable", "Blocked", "In Progress", "To Do", "Backlog"].map((st) => (
               <button
                 key={st}
                 onClick={() => {
@@ -521,7 +532,7 @@ export const WbsView: React.FC<WbsViewProps> = ({
                     : "bg-[#141C2E] text-slate-300 hover:text-white border border-slate-800"
                 }`}
               >
-                {st}
+                {st === "Demoable" ? "Demo Ready" : st}
               </button>
             ))}
           </div>
@@ -569,26 +580,30 @@ export const WbsView: React.FC<WbsViewProps> = ({
         onAddWbsItem={onAddWbsItem}
         onUpdateWbsItem={onUpdateWbsItem}
         onDeleteWbsItem={onDeleteWbsItem}
-        onOpenAddModal={(parentId, statusPreset) => {
-          if (parentId) {
-            const parentItem = wbsItems.find((i) => i.id === parentId);
-            if (parentItem) {
-              handleOpenAddSubtask(parentItem);
-              return;
-            }
+        statusConfigs={statusConfigs}
+        onUpdateStatusConfigs={onUpdateStatusConfigs}
+        onSyncAllTasks={onSyncAllTasks}
+        onApplyStatusProgressToTasks={onApplyStatusProgressToTasks}
+        onOpenAddModal={(parentId, statusPreset, parentItemArg) => {
+          const parentItem = parentItemArg || (parentId ? wbsItems.find((i) => i.id === parentId) : null);
+          if (parentItem) {
+            handleOpenAddSubtask(parentItem);
+            return;
           }
+          const topMilestones = wbsItems.filter((i) => !getParentId(i, wbsItems));
+          const effectiveStatus = statusPreset || "To Do";
           setFormData({
             title: "",
-            wbsCode: `${wbsItems.length + 1}.0`,
-            type: "Task",
-            status: statusPreset || "To Do",
+            wbsCode: `${topMilestones.length + 1}.0`,
+            type: "Milestone",
+            status: effectiveStatus,
             priority: "Medium",
             parentId: null,
             estimatedHours: 40,
             actualHours: 0,
             plannedBudget: 6000,
             actualCost: 0,
-            progressPercent: 0,
+            progressPercent: getProgressForStatus(effectiveStatus, statusConfigs),
             assignedStakeholderId: stakeholders[0]?.id || "",
             startDate: new Date().toISOString().split("T")[0],
             dueDate: new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0],
@@ -603,106 +618,144 @@ export const WbsView: React.FC<WbsViewProps> = ({
       />
 
       {/* Add New WBS Item Modal */}
-      {isAddModalOpen && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/80 backdrop-blur-xs p-3 sm:p-5 flex items-start sm:items-center justify-center">
-          <div className="relative bg-[#0B0F19] border border-[#1E293B] rounded-xl max-w-xl w-full my-auto max-h-[calc(100vh-1.5rem)] sm:max-h-[calc(100vh-2.5rem)] flex flex-col shadow-2xl animate-in fade-in zoom-in-95 duration-150 overflow-hidden">
-            <div className="flex items-center justify-between px-5 sm:px-6 py-3.5 border-b border-[#1E293B] shrink-0 bg-[#060911]">
-              <h3 className="text-sm sm:text-base font-bold text-white font-mono">Add New WBS Work Item</h3>
-              <button
-                type="button"
-                onClick={() => setIsAddModalOpen(false)}
-                className="text-slate-400 hover:text-white p-1 rounded-md cursor-pointer transition-colors"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
+      {isAddModalOpen && (() => {
+        const currentParent = formData.parentId ? wbsItems.find((i) => i.id === formData.parentId) : null;
+        const currentTypeInfo = getHierarchyLevelInfo(formData.type as WbsType);
+        const formTitle = currentParent
+          ? `Create New ${formData.type === "User Story" ? "Story" : formData.type}`
+          : `Create New ${formData.type === "User Story" ? "Story" : formData.type}`;
 
-            <form onSubmit={handleSaveNew} className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-3.5 text-xs">
-              <div>
-                <label className="block text-slate-300 font-medium mb-1">
-                  Parent Deliverable / Hierarchy Attachment
-                </label>
-                <select
-                  value={formData.parentId || ""}
-                  onChange={(e) => {
-                    const selectedParentId = e.target.value || null;
-                    const parentItem = selectedParentId ? wbsItems.find((i) => i.id === selectedParentId) : null;
-                    if (parentItem) {
-                      const nextCode = generateNextWbsChildCode(parentItem, wbsItems);
-                      const nextType = suggestChildType(parentItem.type);
-                      setFormData({
-                        ...formData,
-                        parentId: parentItem.id,
-                        wbsCode: nextCode,
-                        type: nextType,
-                        startDate: parentItem.startDate || formData.startDate,
-                        dueDate: parentItem.dueDate || formData.dueDate,
-                      });
-                    } else {
-                      const topLevels = wbsItems.filter((i) => !getParentId(i, wbsItems));
-                      setFormData({
-                        ...formData,
-                        parentId: null,
-                        wbsCode: `${topLevels.length + 1}.0`,
-                        type: "Milestone",
-                      });
-                    }
-                  }}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono text-xs"
-                >
-                  <option value="">None (Top-Level Milestone / Project Phase)</option>
-                  {wbsItems.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      [{item.wbsCode}] {item.title} ({item.type})
-                    </option>
-                  ))}
-                </select>
-                {formData.parentId ? (
-                  <div className="mt-1.5 p-2 rounded-md bg-sky-950/40 border border-sky-800/40 text-[11px] text-sky-300 flex items-start gap-1.5">
-                    <Info className="h-3.5 w-3.5 shrink-0 mt-0.5 text-sky-400" />
-                    <span>
-                      <strong>Automated 100% Roll-up Active:</strong> Estimated Hours and Planned Budget entered here will automatically sum into its parent deliverable and all ancestors.
-                    </span>
+        return (
+          <div className="fixed inset-0 z-50 overflow-y-auto bg-black/80 backdrop-blur-xs p-3 sm:p-5 flex items-start sm:items-center justify-center">
+            <div className="relative bg-[#0B0F19] border border-[#1E293B] rounded-xl max-w-xl w-full my-auto max-h-[calc(100vh-1.5rem)] sm:max-h-[calc(100vh-2.5rem)] flex flex-col shadow-2xl animate-in fade-in zoom-in-95 duration-150 overflow-hidden">
+              <div className="flex items-center justify-between px-5 sm:px-6 py-3.5 border-b border-[#1E293B] shrink-0 bg-[#060911]">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border shrink-0 ${currentTypeInfo.badgeBg}`}>
+                    {currentTypeInfo.shortLabel}
+                  </span>
+                  <div className="min-w-0">
+                    <h3 className="text-sm sm:text-base font-bold text-white font-mono truncate">
+                      {formTitle}
+                    </h3>
+                    {currentParent ? (
+                      <p className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1 font-mono truncate">
+                        <span>Hierarchy: {currentParent.type}</span>
+                        <span className="text-sky-400">➔</span>
+                        <span className="text-white font-medium truncate">[{currentParent.wbsCode}] {currentParent.title}</span>
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-slate-400 mt-0.5">Top-Level Project Deliverable / Milestone</p>
+                    )}
                   </div>
-                ) : (
-                  <div className="mt-1.5 p-2 rounded-md bg-purple-950/40 border border-purple-800/40 text-[11px] text-purple-300 flex items-start gap-1.5">
-                    <Info className="h-3.5 w-3.5 shrink-0 mt-0.5 text-purple-400" />
-                    <span>
-                      Top-Level Milestone: Will act as a primary summary level. Child deliverables added beneath it will automatically roll up their estimates.
-                    </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsAddModalOpen(false)}
+                  className="text-slate-400 hover:text-white p-1 rounded-md cursor-pointer transition-colors shrink-0"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveNew} className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-3.5 text-xs">
+                {currentParent && (
+                  <div className="p-2.5 rounded-lg bg-sky-950/30 border border-sky-800/40 text-xs text-sky-200 flex items-start gap-2">
+                    <Info className="h-4 w-4 text-sky-400 shrink-0 mt-0.5" />
+                    <div className="text-[11px] leading-relaxed">
+                      <span>Hierarchical Child Creation: </span>
+                      <strong className="text-white">
+                        {currentParent.type} ➔ {formData.type === "User Story" ? "Story" : formData.type}
+                      </strong>
+                      . This work item will be attached directly under <code className="bg-slate-900 px-1 py-0.5 rounded text-sky-300">[{currentParent.wbsCode}] {currentParent.title}</code> with automated 100% PMI cost and schedule roll-up.
+                    </div>
                   </div>
                 )}
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-slate-300 font-medium mb-1">WBS Code *</label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.wbsCode}
-                    onChange={(e) => setFormData({ ...formData, wbsCode: e.target.value })}
-                    placeholder="e.g. 2.1.2"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono"
-                  />
-                </div>
 
                 <div>
-                  <label className="block text-slate-300 font-medium mb-1">PMI Level Type *</label>
+                  <label className="block text-slate-300 font-medium mb-1">
+                    Parent Deliverable / Hierarchy Attachment
+                  </label>
                   <select
-                    value={formData.type}
-                    onChange={(e) => setFormData({ ...formData, type: e.target.value as WbsType })}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white"
+                    value={formData.parentId || ""}
+                    onChange={(e) => {
+                      const selectedParentId = e.target.value || null;
+                      const parentItem = selectedParentId ? wbsItems.find((i) => i.id === selectedParentId) : null;
+                      if (parentItem) {
+                        const nextCode = generateNextWbsChildCode(parentItem, wbsItems);
+                        const nextType = suggestChildType(parentItem.type);
+                        setFormData({
+                          ...formData,
+                          parentId: parentItem.id,
+                          wbsCode: nextCode,
+                          type: nextType,
+                          startDate: parentItem.startDate || formData.startDate,
+                          dueDate: parentItem.dueDate || formData.dueDate,
+                        });
+                      } else {
+                        const topLevels = wbsItems.filter((i) => !getParentId(i, wbsItems));
+                        setFormData({
+                          ...formData,
+                          parentId: null,
+                          wbsCode: `${topLevels.length + 1}.0`,
+                          type: "Milestone",
+                        });
+                      }
+                    }}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono text-xs"
                   >
-                    <option value="Milestone">Milestone</option>
-                    <option value="Epic">Epic</option>
-                    <option value="Feature">Feature</option>
-                    <option value="User Story">User Story</option>
-                    <option value="Task">Task</option>
-                    <option value="Subtask">Subtask</option>
+                    <option value="">None (Top-Level Milestone / Project Phase)</option>
+                    {wbsItems.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        [{item.wbsCode}] {item.title} ({item.type})
+                      </option>
+                    ))}
                   </select>
+                  {formData.parentId ? (
+                    <div className="mt-1.5 p-2 rounded-md bg-sky-950/40 border border-sky-800/40 text-[11px] text-sky-300 flex items-start gap-1.5">
+                      <Info className="h-3.5 w-3.5 shrink-0 mt-0.5 text-sky-400" />
+                      <span>
+                        <strong>Automated 100% Roll-up Active:</strong> Estimated Hours and Planned Budget entered here will automatically sum into its parent deliverable and all ancestors.
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="mt-1.5 p-2 rounded-md bg-purple-950/40 border border-purple-800/40 text-[11px] text-purple-300 flex items-start gap-1.5">
+                      <Info className="h-3.5 w-3.5 shrink-0 mt-0.5 text-purple-400" />
+                      <span>
+                        Top-Level Milestone: Will act as a primary summary level. Child deliverables added beneath it will automatically roll up their estimates.
+                      </span>
+                    </div>
+                  )}
                 </div>
-              </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-slate-300 font-medium mb-1">WBS Code *</label>
+                    <input
+                      type="text"
+                      required
+                      value={formData.wbsCode}
+                      onChange={(e) => setFormData({ ...formData, wbsCode: e.target.value })}
+                      placeholder="e.g. 2.1.2"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-300 font-medium mb-1">PMI Level Type *</label>
+                    <select
+                      value={formData.type}
+                      onChange={(e) => setFormData({ ...formData, type: e.target.value as WbsType })}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white"
+                    >
+                      <option value="Milestone">Milestone (Level 1: Project Phase / Gateway)</option>
+                      <option value="Epic">Epic (Level 2: Major Strategic Deliverable)</option>
+                      <option value="Feature">Feature (Level 3: Functional System Capability)</option>
+                      <option value="User Story">User Story / Story (Level 4: Deliverable Slice)</option>
+                      <option value="Task">Task (Level 5: Work Package)</option>
+                      <option value="Subtask">Subtask (Level 6: Granular Implementation Step)</option>
+                    </select>
+                  </div>
+                </div>
 
               <div>
                 <label className="block text-slate-300 font-medium mb-1">Work Item Title *</label>
@@ -716,19 +769,32 @@ export const WbsView: React.FC<WbsViewProps> = ({
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-300 font-medium mb-1">Workflow Status *</label>
+                  <label className="block text-slate-300 font-medium mb-1 flex items-center justify-between">
+                    <span>Workflow Status *</span>
+                    <span className="text-[10px] text-sky-400 font-normal">
+                      Auto: {getStatusConfig(formData.status, statusConfigs).progressPercent}%
+                    </span>
+                  </label>
                   <select
                     value={formData.status}
-                    onChange={(e) => setFormData({ ...formData, status: e.target.value as WorkItemStatus })}
+                    onChange={(e) => {
+                      const newStatus = e.target.value as WorkItemStatus;
+                      const autoProgress = getProgressForStatus(newStatus, statusConfigs);
+                      setFormData({
+                        ...formData,
+                        status: newStatus,
+                        progressPercent: autoProgress,
+                      });
+                    }}
                     className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white"
                   >
-                    <option value="To Do">To Do</option>
-                    <option value="In Progress">In Progress</option>
-                    <option value="Demoable">Demoable</option>
-                    <option value="Blocked">Blocked</option>
-                    <option value="Done">Done</option>
+                    {statusConfigs.map((cfg) => (
+                      <option key={cfg.key} value={cfg.key}>
+                        {cfg.label} ({cfg.progressPercent}%)
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -745,22 +811,29 @@ export const WbsView: React.FC<WbsViewProps> = ({
                     <option value="Low">Low</option>
                   </select>
                 </div>
+              </div>
 
-                <div>
-                  <label className="block text-slate-300 font-medium mb-1">Assigned Stakeholder</label>
-                  <select
-                    value={formData.assignedStakeholderId}
-                    onChange={(e) => setFormData({ ...formData, assignedStakeholderId: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white"
-                  >
-                    <option value="">Unassigned</option>
-                    {stakeholders.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name} (${s.hourlyRate}/hr) - {s.role}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+              {/* Multi-Stakeholder Assignee Picker */}
+              <div>
+                <MultiStakeholderSelect
+                  stakeholders={stakeholders}
+                  selectedIds={
+                    formData.assignedStakeholderIds && formData.assignedStakeholderIds.length > 0
+                      ? formData.assignedStakeholderIds
+                      : formData.assignedStakeholderId
+                      ? [formData.assignedStakeholderId]
+                      : []
+                  }
+                  onChange={(ids) => {
+                    setFormData({
+                      ...formData,
+                      assignedStakeholderIds: ids,
+                      assignedStakeholderId: ids[0] || "",
+                      contributorStakeholderIds: ids.slice(1),
+                    });
+                  }}
+                  label="Assigned Stakeholders (Multiple members can be assigned)"
+                />
               </div>
 
               <div className="grid grid-cols-3 gap-3">
@@ -795,7 +868,12 @@ export const WbsView: React.FC<WbsViewProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-slate-300 font-medium mb-1">Progress %</label>
+                  <label className="block text-slate-300 font-medium mb-1 flex items-center justify-between">
+                    <span>Progress %</span>
+                    <span className="text-[10px] text-sky-400 font-normal">
+                      Linked: {getStatusConfig(formData.status, statusConfigs).progressPercent}%
+                    </span>
+                  </label>
                   <input
                     type="number"
                     min={0}
@@ -841,13 +919,14 @@ export const WbsView: React.FC<WbsViewProps> = ({
                   type="submit"
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg cursor-pointer transition-colors"
                 >
-                  Save WBS Item
+                  Create {formData.type === "User Story" ? "Story" : formData.type}
                 </button>
               </div>
             </form>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Edit WBS Item Modal */}
       {editingItem && (
@@ -951,24 +1030,30 @@ export const WbsView: React.FC<WbsViewProps> = ({
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div>
-                        <label className="block text-slate-300 font-medium mb-1">Workflow Status</label>
+                        <label className="block text-slate-300 font-medium mb-1 flex items-center justify-between">
+                          <span>Workflow Status</span>
+                          <span className="text-[10px] text-sky-400 font-normal">
+                            Auto: {getStatusConfig(editingItem.status, statusConfigs).progressPercent}%
+                          </span>
+                        </label>
                         <select
                           value={editingItem.status}
-                          onChange={(e) =>
+                          onChange={(e) => {
+                            const newStatus = e.target.value as WorkItemStatus;
+                            const autoProgress = getProgressForStatus(newStatus, statusConfigs);
                             setEditingItem({
                               ...editingItem,
-                              status: e.target.value as WorkItemStatus,
-                              progressPercent:
-                                e.target.value === "Done" ? 100 : editingItem.progressPercent,
-                            })
-                          }
+                              status: newStatus,
+                              progressPercent: autoProgress,
+                            });
+                          }}
                           className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white"
                         >
-                          <option value="To Do">To Do</option>
-                          <option value="In Progress">In Progress</option>
-                          <option value="Demoable">Demoable</option>
-                          <option value="Blocked">Blocked</option>
-                          <option value="Done">Done</option>
+                          {statusConfigs.map((cfg) => (
+                            <option key={cfg.key} value={cfg.key}>
+                              {cfg.label} ({cfg.progressPercent}%)
+                            </option>
+                          ))}
                         </select>
                       </div>
 
@@ -992,7 +1077,12 @@ export const WbsView: React.FC<WbsViewProps> = ({
                       </div>
 
                       <div>
-                        <label className="block text-slate-300 font-medium mb-1">Progress %</label>
+                        <label className="block text-slate-300 font-medium mb-1 flex items-center justify-between">
+                          <span>Progress %</span>
+                          <span className="text-[10px] text-sky-400 font-normal">
+                            Linked: {getStatusConfig(editingItem.status, statusConfigs).progressPercent}%
+                          </span>
+                        </label>
                         <input
                           type="number"
                           min={0}
@@ -1006,24 +1096,30 @@ export const WbsView: React.FC<WbsViewProps> = ({
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-slate-300 font-medium mb-1">Assigned Stakeholder</label>
-                        <select
-                          value={editingItem.assignedStakeholderId}
-                          onChange={(e) =>
-                            setEditingItem({ ...editingItem, assignedStakeholderId: e.target.value })
-                          }
-                          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white"
-                        >
-                          {stakeholders.map((s) => (
-                            <option key={s.id} value={s.id}>
-                              {s.name} (${s.hourlyRate}/hr)
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                    {/* Multi-Stakeholder Assignee Picker */}
+                    <div>
+                      <MultiStakeholderSelect
+                        stakeholders={stakeholders}
+                        selectedIds={
+                          editingItem.assignedStakeholderIds && editingItem.assignedStakeholderIds.length > 0
+                            ? editingItem.assignedStakeholderIds
+                            : editingItem.assignedStakeholderId
+                            ? [editingItem.assignedStakeholderId]
+                            : []
+                        }
+                        onChange={(ids) => {
+                          setEditingItem({
+                            ...editingItem,
+                            assignedStakeholderIds: ids,
+                            assignedStakeholderId: ids[0] || "",
+                            contributorStakeholderIds: ids.slice(1),
+                          });
+                        }}
+                        label="Assigned Stakeholders (Multiple members can be assigned)"
+                      />
+                    </div>
 
+                    <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="block text-slate-300 font-medium mb-1">Actual Hours Logged</label>
                         <input
@@ -1031,6 +1127,17 @@ export const WbsView: React.FC<WbsViewProps> = ({
                           value={editingItem.actualHours}
                           onChange={(e) =>
                             setEditingItem({ ...editingItem, actualHours: Number(e.target.value) })
+                          }
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-300 font-medium mb-1">Target Due Date</label>
+                        <input
+                          type="date"
+                          value={editingItem.dueDate}
+                          onChange={(e) =>
+                            setEditingItem({ ...editingItem, dueDate: e.target.value })
                           }
                           className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono"
                         />

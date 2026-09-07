@@ -8,6 +8,7 @@ import {
   RaciMatrixEntry,
   ActiveTab,
   ProjectSettings,
+  StatusConfig,
 } from "./types";
 import {
   initialProjectSettings,
@@ -20,6 +21,11 @@ import {
 } from "./data/seedData";
 import { calculateEvmMetrics } from "./utils/pmiCalculations";
 import { calculateWbsHierarchyRollups } from "./utils/wbsRollup";
+import {
+  loadStatusConfigs,
+  saveStatusConfigs,
+  getProgressForStatus,
+} from "./utils/statusConfig";
 import { Sidebar } from "./components/Sidebar";
 import { Navbar } from "./components/Navbar";
 import { DashboardView } from "./components/DashboardView";
@@ -37,19 +43,20 @@ export default function App() {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   const [projectSettings, setProjectSettings] = useState<ProjectSettings>(initialProjectSettings);
-  const [wbsItems, setWbsItems] = useState<WbsItem[]>(initialWbsItems);
+  const [wbsItems, setWbsItems] = useState<WbsItem[]>(() => calculateWbsHierarchyRollups(initialWbsItems, initialStakeholders).rolledUpItems);
   const [stakeholders, setStakeholders] = useState<Stakeholder[]>(initialStakeholders);
   const [raidItems, setRaidItems] = useState<RaidItem[]>(initialRaidItems);
   const [changeRequests, setChangeRequests] = useState<ChangeRequest[]>(initialChangeRequests);
   const [documents, setDocuments] = useState<ProjectDocument[]>(initialDocuments);
   const [raciEntries, setRaciEntries] = useState<RaciMatrixEntry[]>(initialRaciEntries);
+  const [statusConfigs, setStatusConfigs] = useState<StatusConfig[]>(() => loadStatusConfigs());
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Automated WBS Hierarchy Roll-up (PMI 100% Rule)
+  // Automated WBS Hierarchy Roll-up (PMI 100% Rule, Time, Cost, RACI, Priority, Critical Path)
   const wbsRollupData = useMemo(() => {
-    return calculateWbsHierarchyRollups(wbsItems);
-  }, [wbsItems]);
+    return calculateWbsHierarchyRollups(wbsItems, stakeholders);
+  }, [wbsItems, stakeholders]);
 
   const rolledUpWbsItems = wbsRollupData.rolledUpItems;
 
@@ -75,25 +82,65 @@ export default function App() {
     (c) => c.status === "Submitted" || c.status === "Under Review" || c.ccbStatus === "Pending CCB"
   ).length;
 
-  // WBS CRUD
+  // WBS CRUD - Intelligently recalculates and updates higher hierarchy across epics/milestones
   const handleAddWbsItem = (item: WbsItem) => {
-    setWbsItems((prev) => [...prev, item]);
-    showToast(`Added work item ${item.wbsCode}: Estimates rolled up the hierarchy.`);
+    setWbsItems((prev) => {
+      const next = [...prev, item];
+      return calculateWbsHierarchyRollups(next, stakeholders).rolledUpItems;
+    });
+    showToast(`Added work item ${item.wbsCode}: Time and cost rolled up the hierarchy.`);
   };
 
   const handleUpdateWbsItem = (updated: WbsItem) => {
-    setWbsItems((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+    setWbsItems((prev) => {
+      const next = prev.map((item) => (item.id === updated.id ? updated : item));
+      return calculateWbsHierarchyRollups(next, stakeholders).rolledUpItems;
+    });
     showToast(`Updated ${updated.wbsCode}: Automated roll-up recalculated across hierarchy.`);
   };
 
   const handleDeleteWbsItem = (id: string) => {
-    setWbsItems((prev) => prev.filter((i) => i.id !== id && i.parentId !== id));
+    setWbsItems((prev) => {
+      const next = prev.filter((i) => i.id !== id && i.parentId !== id);
+      return calculateWbsHierarchyRollups(next, stakeholders).rolledUpItems;
+    });
     showToast("WBS item and children deleted.");
   };
 
   const handleBatchAddWbsItems = (newItems: WbsItem[]) => {
-    setWbsItems((prev) => [...prev, ...newItems]);
+    setWbsItems((prev) => {
+      const next = [...prev, ...newItems];
+      return calculateWbsHierarchyRollups(next, stakeholders).rolledUpItems;
+    });
     showToast(`Imported ${newItems.length} work items into WBS.`);
+  };
+
+  // Status & Progress Rules Handlers
+  const handleUpdateStatusConfigs = (newConfigs: StatusConfig[]) => {
+    setStatusConfigs(newConfigs);
+    saveStatusConfigs(newConfigs);
+    showToast("Workflow status rules saved successfully.");
+  };
+
+  const handleApplyStatusProgressToTasks = (statusKey: string, newProgress: number) => {
+    setWbsItems((prev) => {
+      const updated = prev.map((item) =>
+        item.status === statusKey ? { ...item, progressPercent: newProgress } : item
+      );
+      return calculateWbsHierarchyRollups(updated, stakeholders).rolledUpItems;
+    });
+    showToast(`Updated progress to ${newProgress}% for all tasks with status "${statusKey}".`);
+  };
+
+  const handleSyncAllTasksWithStatusProgress = () => {
+    setWbsItems((prev) => {
+      const updated = prev.map((item) => ({
+        ...item,
+        progressPercent: getProgressForStatus(item.status, statusConfigs),
+      }));
+      return calculateWbsHierarchyRollups(updated, stakeholders).rolledUpItems;
+    });
+    showToast("Synchronized progress percentages across all work items based on current workflow status rules.");
   };
 
   // Stakeholders CRUD
@@ -103,20 +150,20 @@ export default function App() {
   };
 
   const handleUpdateStakeholder = (updated: Stakeholder) => {
-    setStakeholders((prev) =>
-      prev.map((s) => (s.id === updated.id ? updated : s))
-    );
+    const updatedStakeholders = stakeholders.map((s) => (s.id === updated.id ? updated : s));
+    setStakeholders(updatedStakeholders);
 
     // Update any WBS items assigned to this stakeholder so their actualCost is synced
-    setWbsItems((prev) =>
-      prev.map((item) => {
+    setWbsItems((prev) => {
+      const updatedItems = prev.map((item) => {
         if (item.assignedStakeholderId === updated.id) {
           const cost = item.actualHours * updated.hourlyRate;
           return { ...item, actualCost: cost };
         }
         return item;
-      })
-    );
+      });
+      return calculateWbsHierarchyRollups(updatedItems, updatedStakeholders).rolledUpItems;
+    });
 
     showToast(`Updated ${updated.name}'s rate to $${updated.hourlyRate}/hr. Recalculated EVM CPI/SPI.`);
   };
@@ -153,6 +200,7 @@ export default function App() {
       }
       return [...prev, updated];
     });
+    showToast("Updated RACI matrix: Hierarchy roles recalculated up the deliverables.");
   };
 
   // Change Management CRUD
@@ -279,7 +327,7 @@ export default function App() {
       />
 
       {/* Main Content Pane */}
-      <main className="flex-1 flex flex-col h-full overflow-hidden bg-[#030712]">
+      <main className="flex-1 flex flex-col h-full min-w-0 overflow-hidden bg-[#030712]">
         {/* Top Header with AI Query Input and Period info */}
         <Navbar
           activeTab={activeTab}
@@ -293,7 +341,7 @@ export default function App() {
         />
 
         {/* Scrollable Viewport */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+        <div className="flex-1 overflow-y-auto min-w-0 p-3 sm:p-5 md:p-6 space-y-6">
           {activeTab === "dashboard" && (
             <DashboardView
               wbsItems={wbsItems}
@@ -301,6 +349,7 @@ export default function App() {
               raidItems={raidItems}
               changeRequests={changeRequests}
               evmMetrics={evmMetrics}
+              statusConfigs={statusConfigs}
               onNavigateTab={setActiveTab}
               onGenerateReportClick={(type) => {
                 setActiveTab("reports");
@@ -317,6 +366,10 @@ export default function App() {
               onUpdateWbsItem={handleUpdateWbsItem}
               onDeleteWbsItem={handleDeleteWbsItem}
               onBatchAddWbsItems={handleBatchAddWbsItems}
+              statusConfigs={statusConfigs}
+              onUpdateStatusConfigs={handleUpdateStatusConfigs}
+              onSyncAllTasks={handleSyncAllTasksWithStatusProgress}
+              onApplyStatusProgressToTasks={handleApplyStatusProgressToTasks}
             />
           )}
 

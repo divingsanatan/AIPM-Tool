@@ -7,6 +7,7 @@ import {
   EvmMetrics,
   ActiveTab,
   GlobalFilterState,
+  StatusConfig,
 } from "../types";
 import {
   TrendingUp,
@@ -22,6 +23,8 @@ import {
   ChevronRight,
   Layers,
   Filter,
+  Sliders,
+  CheckCircle2,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -44,6 +47,10 @@ import {
   isFilterActive,
   getItemPriority,
 } from "../utils/filterUtils";
+import {
+  DEFAULT_STATUS_CONFIGS,
+  getStatusConfig,
+} from "../utils/statusConfig";
 
 interface DashboardViewProps {
   wbsItems: WbsItem[];
@@ -55,6 +62,7 @@ interface DashboardViewProps {
   onGenerateReportClick: (type: "risk" | "pmi") => void;
   globalFilter?: GlobalFilterState;
   onResetFilters?: () => void;
+  statusConfigs?: StatusConfig[];
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -67,6 +75,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onGenerateReportClick,
   globalFilter,
   onResetFilters,
+  statusConfigs = DEFAULT_STATUS_CONFIGS,
 }) => {
   const [wbsFilter, setWbsFilter] = useState<string>("All");
   const sCurveData = generateSCurveData(evmMetrics);
@@ -83,16 +92,48 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const filtersActive = globalFilter ? isFilterActive(globalFilter) : false;
 
-  // Filtered WBS preview - respect globalFilter first, then local level type
+  // Filtered WBS preview - respect globalFilter first, then local level type or status
   const matchingWbsItems = useMemo(() => {
     if (!globalFilter || !filtersActive) return wbsItems;
     return wbsItems.filter((item) => doesItemMatchFilters(item, globalFilter));
   }, [wbsItems, globalFilter, filtersActive]);
 
-  const filteredWbsItems =
-    wbsFilter === "All"
-      ? matchingWbsItems.slice(0, 8)
-      : matchingWbsItems.filter((item) => item.type === wbsFilter).slice(0, 8);
+  // Dynamic status & automatic progress metrics across WBS
+  const statusStats = useMemo(() => {
+    const totalItems = wbsItems.length || 1;
+    return statusConfigs.map((cfg) => {
+      const items = wbsItems.filter((item) => item.status === cfg.key);
+      const count = items.length;
+      const percentOfTotal = Math.round((count / totalItems) * 100);
+      const totalEstimatedHours = items.reduce((sum, i) => sum + (Number(i.estimatedHours) || 0), 0);
+      const totalPlannedBudget = items.reduce((sum, i) => sum + (Number(i.plannedBudget) || 0), 0);
+      const earnedValueContribution = items.reduce((sum, i) => {
+        const itemProg = i.progressPercent !== undefined ? i.progressPercent : cfg.progressPercent;
+        return sum + ((Number(i.plannedBudget) || 0) * itemProg) / 100;
+      }, 0);
+      return {
+        ...cfg,
+        count,
+        percentOfTotal,
+        totalEstimatedHours,
+        totalPlannedBudget,
+        earnedValueContribution,
+      };
+    });
+  }, [wbsItems, statusConfigs]);
+
+  const totalWbsEffortHours = useMemo(() => {
+    return wbsItems.reduce((sum, i) => sum + (Number(i.estimatedHours) || 0), 0);
+  }, [wbsItems]);
+
+  const filteredWbsItems = useMemo(() => {
+    if (wbsFilter === "All") return matchingWbsItems.slice(0, 10);
+    const isStatus = statusConfigs.some((c) => c.key === wbsFilter);
+    if (isStatus) {
+      return matchingWbsItems.filter((item) => item.status === wbsFilter).slice(0, 10);
+    }
+    return matchingWbsItems.filter((item) => item.type === wbsFilter).slice(0, 10);
+  }, [matchingWbsItems, wbsFilter, statusConfigs]);
 
   const getStakeholderName = (id?: string) => {
     if (!id) return "Unassigned";
@@ -106,28 +147,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   return (
     <div className="space-y-6 text-[#F8FAFC]">
       {/* Top Project Delivery Telemetry Bar */}
-      <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl px-5 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
-        <div className="flex items-center gap-3">
+      <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl px-4 sm:px-5 py-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-xs">
+        <div className="flex items-center gap-3 min-w-0">
           <div className="flex h-2.5 w-2.5 relative shrink-0">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
             <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
           </div>
-          <div>
-            <div className="flex items-center gap-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-sm font-bold text-white tracking-wide font-mono">
                 Project Delivery Telemetry & EVM Control
               </h2>
-              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-sky-950/80 text-sky-400 border border-sky-800/80">
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-sky-950/80 text-sky-400 border border-sky-800/80 shrink-0">
                 ANSI/PMI 99-001
               </span>
             </div>
-            <p className="text-xs text-slate-400 mt-0.5 font-sans">
+            <p className="text-xs text-slate-400 mt-0.5 font-sans truncate">
               Real-time earned value pacing, predictive EAC scenarios, and critical chain tracking
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
           <button
             onClick={() => onNavigateTab("wbs")}
             className="text-xs font-mono text-slate-300 hover:text-white px-3 py-1.5 rounded-lg bg-[#141C2E] border border-slate-800 hover:border-slate-700 transition-colors cursor-pointer flex items-center gap-1.5"
@@ -146,188 +187,208 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* 4 Core High-Contrast KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {/* CPI Card */}
-        <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 shadow-xs">
-          <div className="flex justify-between items-start">
-            <div className="flex items-center space-x-2">
-              <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                <DollarSign className="w-4 h-4" />
+        <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 shadow-xs flex flex-col justify-between">
+          <div>
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
+                  <DollarSign className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <span className="text-xs font-bold text-slate-300 uppercase tracking-wider font-mono whitespace-nowrap">
+                    CPI
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-sans ml-1.5 whitespace-nowrap hidden min-[360px]:inline">
+                    (Cost Efficiency)
+                  </span>
+                </div>
               </div>
-              <span className="text-xs font-bold text-slate-300 uppercase tracking-wider font-mono">
-                CPI (Cost Efficiency)
+              <span
+                className={`shrink-0 text-[10px] font-mono font-bold px-2 py-0.5 rounded whitespace-nowrap ${
+                  evmMetrics.cpi >= 1.0
+                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                    : "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                }`}
+              >
+                {evmMetrics.costStatus}
               </span>
             </div>
-            <span
-              className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${
-                evmMetrics.cpi >= 1.0
-                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-                  : "bg-amber-500/20 text-amber-300 border border-amber-500/30"
-              }`}
-            >
-              {evmMetrics.costStatus}
-            </span>
+            <div className="mt-3 flex items-baseline justify-between gap-2 flex-wrap">
+              <span className="text-2xl sm:text-3xl font-bold tracking-tight text-white font-mono">
+                {evmMetrics.cpi.toFixed(2)}
+              </span>
+              <span className="text-xs text-slate-400 font-mono whitespace-nowrap">Target: 1.00</span>
+            </div>
+            <div className="mt-2.5 flex items-center justify-between text-xs font-mono pt-2 border-t border-[#1E293B]">
+              <span className="text-slate-400 whitespace-nowrap">Cost Variance (CV):</span>
+              <span
+                className={`font-bold whitespace-nowrap ${
+                  evmMetrics.cv >= 0 ? "text-emerald-400" : "text-rose-400"
+                }`}
+              >
+                {evmMetrics.cv >= 0 ? "+" : ""}${evmMetrics.cv.toLocaleString()}
+              </span>
+            </div>
           </div>
-          <div className="mt-3 flex items-baseline space-x-2">
-            <span className="text-3xl font-bold tracking-tight text-white font-mono">
-              {evmMetrics.cpi.toFixed(2)}
-            </span>
-            <span className="text-xs text-slate-400 font-mono">Target: 1.00</span>
-          </div>
-          <div className="mt-2.5 flex items-center justify-between text-xs font-mono pt-2 border-t border-[#1E293B]">
-            <span className="text-slate-400">Cost Variance (CV):</span>
-            <span
-              className={`font-bold ${
-                evmMetrics.cv >= 0 ? "text-emerald-400" : "text-rose-400"
-              }`}
-            >
-              {evmMetrics.cv >= 0 ? "+" : ""}${evmMetrics.cv.toLocaleString()}
-            </span>
-          </div>
-          <p className="text-[11px] text-slate-400 mt-1 font-sans">
+          <p className="text-[11px] text-slate-400 mt-2 font-sans">
             ${laborAnalytics.earnedValuePerDollar.toFixed(2)} EV delivered per $1.00 spent
           </p>
         </div>
 
         {/* SPI Card */}
-        <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 shadow-xs">
-          <div className="flex justify-between items-start">
-            <div className="flex items-center space-x-2">
-              <div className="p-1.5 rounded-lg bg-sky-500/10 text-sky-400 border border-sky-500/20">
-                <Calendar className="w-4 h-4" />
+        <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 shadow-xs flex flex-col justify-between">
+          <div>
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="p-1.5 rounded-lg bg-sky-500/10 text-sky-400 border border-sky-500/20 shrink-0">
+                  <Calendar className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <span className="text-xs font-bold text-slate-300 uppercase tracking-wider font-mono whitespace-nowrap">
+                    SPI
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-sans ml-1.5 whitespace-nowrap hidden min-[360px]:inline">
+                    (Schedule Pacing)
+                  </span>
+                </div>
               </div>
-              <span className="text-xs font-bold text-slate-300 uppercase tracking-wider font-mono">
-                SPI (Schedule Pacing)
+              <span
+                className={`shrink-0 text-[10px] font-mono font-bold px-2 py-0.5 rounded whitespace-nowrap ${
+                  evmMetrics.spi >= 1.0
+                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                    : "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                }`}
+              >
+                {evmMetrics.scheduleStatus}
               </span>
             </div>
-            <span
-              className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${
-                evmMetrics.spi >= 1.0
-                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-                  : "bg-amber-500/20 text-amber-300 border border-amber-500/30"
-              }`}
-            >
-              {evmMetrics.scheduleStatus}
-            </span>
+            <div className="mt-3 flex items-baseline justify-between gap-2 flex-wrap">
+              <span className="text-2xl sm:text-3xl font-bold tracking-tight text-white font-mono">
+                {evmMetrics.spi.toFixed(2)}
+              </span>
+              <span className="text-xs text-slate-400 font-mono whitespace-nowrap">Target: 1.00</span>
+            </div>
+            <div className="mt-2.5 flex items-center justify-between text-xs font-mono pt-2 border-t border-[#1E293B]">
+              <span className="text-slate-400 whitespace-nowrap">Schedule Variance:</span>
+              <span
+                className={`font-bold whitespace-nowrap ${
+                  evmMetrics.sv >= 0 ? "text-emerald-400" : "text-amber-400"
+                }`}
+              >
+                {evmMetrics.sv >= 0 ? "+" : ""}${evmMetrics.sv.toLocaleString()}
+              </span>
+            </div>
           </div>
-          <div className="mt-3 flex items-baseline space-x-2">
-            <span className="text-3xl font-bold tracking-tight text-white font-mono">
-              {evmMetrics.spi.toFixed(2)}
-            </span>
-            <span className="text-xs text-slate-400 font-mono">Target: 1.00</span>
-          </div>
-          <div className="mt-2.5 flex items-center justify-between text-xs font-mono pt-2 border-t border-[#1E293B]">
-            <span className="text-slate-400">Schedule Variance:</span>
-            <span
-              className={`font-bold ${
-                evmMetrics.sv >= 0 ? "text-emerald-400" : "text-amber-400"
-              }`}
-            >
-              {evmMetrics.sv >= 0 ? "+" : ""}${evmMetrics.sv.toLocaleString()}
-            </span>
-          </div>
-          <p className="text-[11px] text-slate-400 mt-1 font-sans">
+          <p className="text-[11px] text-slate-400 mt-2 font-sans">
             Critical path projected slip: +{criticalAnalytics.projectedScheduleSlipDays} days
           </p>
         </div>
 
         {/* EAC Card */}
-        <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 shadow-xs">
-          <div className="flex justify-between items-start">
-            <div className="flex items-center space-x-2">
-              <div className="p-1.5 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                <TrendingUp className="w-4 h-4" />
+        <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 shadow-xs flex flex-col justify-between">
+          <div>
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="p-1.5 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/20 shrink-0">
+                  <TrendingUp className="w-4 h-4" />
+                </div>
+                <span className="text-xs font-bold text-slate-300 uppercase tracking-wider font-mono whitespace-nowrap">
+                  EAC Forecast
+                </span>
               </div>
-              <span className="text-xs font-bold text-slate-300 uppercase tracking-wider font-mono">
-                EAC Forecast
+              <span className="shrink-0 text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
+                BAC: ${(evmMetrics.bac / 1000).toFixed(0)}k
               </span>
             </div>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
-              BAC: ${(evmMetrics.bac / 1000).toFixed(0)}k
-            </span>
+            <div className="mt-3 flex items-baseline justify-between gap-2 flex-wrap">
+              <span className="text-2xl sm:text-3xl font-bold tracking-tight text-white font-mono">
+                ${(evmMetrics.eac / 1000).toFixed(1)}k
+              </span>
+              <span
+                className={`text-xs font-mono font-semibold whitespace-nowrap ${
+                  evmMetrics.vac >= 0 ? "text-emerald-400" : "text-rose-400"
+                }`}
+              >
+                VAC: {evmMetrics.vac >= 0 ? "+" : ""}${(evmMetrics.vac / 1000).toFixed(1)}k
+              </span>
+            </div>
+            <div className="mt-2.5 flex items-center justify-between text-xs font-mono pt-2 border-t border-[#1E293B]">
+              <span className="text-slate-400 whitespace-nowrap">Dual-Factor Risk:</span>
+              <span className="font-bold text-amber-400 whitespace-nowrap">
+                ${(dualFactorEac / 1000).toFixed(1)}k
+              </span>
+            </div>
           </div>
-          <div className="mt-3 flex items-baseline space-x-2">
-            <span className="text-3xl font-bold tracking-tight text-white font-mono">
-              ${(evmMetrics.eac / 1000).toFixed(1)}k
-            </span>
-            <span
-              className={`text-xs font-mono ${
-                evmMetrics.vac >= 0 ? "text-emerald-400" : "text-rose-400"
-              }`}
-            >
-              VAC: {evmMetrics.vac >= 0 ? "+" : ""}${(evmMetrics.vac / 1000).toFixed(1)}k
-            </span>
-          </div>
-          <div className="mt-2.5 flex items-center justify-between text-xs font-mono pt-2 border-t border-[#1E293B]">
-            <span className="text-slate-400">Dual-Factor Risk:</span>
-            <span className="font-bold text-amber-400">
-              ${(dualFactorEac / 1000).toFixed(1)}k
-            </span>
-          </div>
-          <p className="text-[11px] text-slate-400 mt-1 font-sans">
+          <p className="text-[11px] text-slate-400 mt-2 font-sans">
             Most likely outcome: ${(mostLikelyEac / 1000).toFixed(1)}k (CPI continuation)
           </p>
         </div>
 
         {/* Contingency Runway Card */}
-        <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 shadow-xs">
-          <div className="flex justify-between items-start">
-            <div className="flex items-center space-x-2">
-              <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                <Scale className="w-4 h-4" />
+        <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 shadow-xs flex flex-col justify-between">
+          <div>
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">
+                  <Scale className="w-4 h-4" />
+                </div>
+                <span className="text-xs font-bold text-slate-300 uppercase tracking-wider font-mono whitespace-nowrap">
+                  Contingency Reserve
+                </span>
               </div>
-              <span className="text-xs font-bold text-slate-300 uppercase tracking-wider font-mono">
-                Contingency Reserve
+              <span className="shrink-0 text-[10px] font-mono px-2 py-0.5 rounded bg-blue-950/80 text-blue-400 border border-blue-800 font-semibold whitespace-nowrap">
+                {contingencyAnalytics.contingencyBurnRatePercent}% Used
               </span>
             </div>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-950/80 text-blue-400 border border-blue-800 font-semibold">
-              {contingencyAnalytics.contingencyBurnRatePercent}% Used
-            </span>
+            <div className="mt-3 flex items-baseline justify-between gap-2 flex-wrap">
+              <span className="text-2xl sm:text-3xl font-bold tracking-tight text-emerald-400 font-mono">
+                ${(contingencyAnalytics.remainingContingency / 1000).toFixed(1)}k
+              </span>
+              <span className="text-xs text-slate-400 font-mono whitespace-nowrap">free buffer</span>
+            </div>
+            <div className="mt-2.5 flex items-center justify-between text-xs font-mono pt-2 border-t border-[#1E293B]">
+              <span className="text-slate-400 whitespace-nowrap">Total Authorized:</span>
+              <span className="font-bold text-white whitespace-nowrap">
+                ${(contingencyAnalytics.totalContingencyReserve / 1000).toFixed(0)}k
+              </span>
+            </div>
           </div>
-          <div className="mt-3 flex items-baseline space-x-2">
-            <span className="text-3xl font-bold tracking-tight text-emerald-400 font-mono">
-              ${(contingencyAnalytics.remainingContingency / 1000).toFixed(1)}k
-            </span>
-            <span className="text-xs text-slate-400 font-mono">free buffer</span>
-          </div>
-          <div className="mt-2.5 flex items-center justify-between text-xs font-mono pt-2 border-t border-[#1E293B]">
-            <span className="text-slate-400">Total Authorized:</span>
-            <span className="font-bold text-white">
-              ${(contingencyAnalytics.totalContingencyReserve / 1000).toFixed(0)}k
-            </span>
-          </div>
-          <p className="text-[11px] text-slate-400 mt-1 font-sans">
+          <p className="text-[11px] text-slate-400 mt-2 font-sans">
             ${contingencyAnalytics.consumedByApprovedCr.toLocaleString()} spent · ${contingencyAnalytics.pendingCrExposure.toLocaleString()} pending CCB
           </p>
         </div>
       </div>
 
       {/* Middle Section: S-Curve Chart & Analytical Forecast Panel */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* EVM Cumulative S-Curve (2 Cols) */}
-        <div className="lg:col-span-2 bg-[#0B0F19] border border-[#1E293B] rounded-xl p-5 shadow-xs flex flex-col justify-between">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        {/* EVM Cumulative S-Curve (2 Cols on XL) */}
+        <div className="xl:col-span-2 bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 sm:p-5 shadow-xs flex flex-col justify-between">
           <div>
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
-              <div>
-                <h3 className="text-xs font-bold text-white uppercase tracking-wider font-mono flex items-center gap-2">
-                  <span>EVM S-Curve Trajectory</span>
-                  <span className="text-[10px] font-normal text-slate-400 font-sans">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <h3 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider font-mono whitespace-nowrap">
+                    EVM S-Curve Trajectory
+                  </h3>
+                  <span className="text-[11px] font-normal text-slate-400 font-sans whitespace-nowrap">
                     (Planned vs Earned vs Actual Cost)
                   </span>
-                </h3>
+                </div>
                 <p className="text-xs text-slate-400 mt-0.5 font-sans">
                   Cumulative project spend and value delivered across delivery cycles
                 </p>
               </div>
-              <div className="flex items-center gap-4 text-xs font-mono">
-                <span className="flex items-center gap-1.5 text-sky-400">
-                  <span className="h-2.5 w-2.5 rounded-full bg-sky-400 inline-block" /> PV (Planned)
+              <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-xs font-mono shrink-0">
+                <span className="flex items-center gap-1.5 text-sky-400 whitespace-nowrap">
+                  <span className="h-2.5 w-2.5 rounded-full bg-sky-400 inline-block shrink-0" /> PV (Planned)
                 </span>
-                <span className="flex items-center gap-1.5 text-emerald-400">
-                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 inline-block" /> EV (Earned)
+                <span className="flex items-center gap-1.5 text-emerald-400 whitespace-nowrap">
+                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 inline-block shrink-0" /> EV (Earned)
                 </span>
-                <span className="flex items-center gap-1.5 text-amber-400">
-                  <span className="h-2.5 w-2.5 rounded-full bg-amber-400 inline-block" /> AC (Actual)
+                <span className="flex items-center gap-1.5 text-amber-400 whitespace-nowrap">
+                  <span className="h-2.5 w-2.5 rounded-full bg-amber-400 inline-block shrink-0" /> AC (Actual)
                 </span>
               </div>
             </div>
@@ -401,7 +462,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-3 pt-3 border-t border-[#1E293B] mt-2 text-xs font-mono">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3 pt-3 border-t border-[#1E293B] mt-2 text-xs font-mono">
             <div className="p-2 rounded-lg bg-[#060911] border border-[#1E293B] flex items-center justify-between">
               <span className="text-slate-400">Current PV:</span>
               <span className="font-bold text-sky-400">${(evmMetrics.pv / 1000).toFixed(1)}k</span>
@@ -418,7 +479,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {/* Analytical Forecasting & Critical Path Diagnostic (1 Col) */}
-        <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-5 shadow-xs flex flex-col justify-between space-y-4">
+        <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 sm:p-5 shadow-xs flex flex-col justify-between space-y-4">
           <div>
             <div className="flex items-center justify-between pb-3 border-b border-[#1E293B]">
               <div>
@@ -429,7 +490,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   PMBOK 4-Model EAC variance analysis
                 </p>
               </div>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-800">
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-800 shrink-0">
                 Confidence 92%
               </span>
             </div>
@@ -441,18 +502,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   key={sc.name}
                   className="p-2.5 rounded-lg bg-[#060911] border border-[#1E293B] hover:border-slate-700 transition-colors"
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-white">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-xs font-semibold text-white leading-snug">
                       {sc.name}
                     </span>
-                    <span className="text-xs font-mono font-bold text-white">
+                    <span className="text-xs font-mono font-bold text-white shrink-0 whitespace-nowrap">
                       ${(sc.eac / 1000).toFixed(1)}k
                     </span>
                   </div>
-                  <div className="flex items-center justify-between text-[11px] mt-1 font-mono">
-                    <span className="text-slate-400">{sc.formula}</span>
+                  <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] mt-1 font-mono">
+                    <span className="text-slate-400 truncate max-w-[150px]">{sc.formula}</span>
                     <span
-                      className={`font-semibold ${
+                      className={`font-semibold shrink-0 whitespace-nowrap ${
                         sc.varianceAtCompletion >= 0
                           ? "text-emerald-400"
                           : "text-rose-400"
@@ -548,14 +609,113 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
+      {/* Workflow Status & Automated Progress Telemetry */}
+      <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 sm:p-5 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#1E293B]">
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider font-mono flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-sky-400" />
+                Workflow Status & Automated Progress Rules
+              </h3>
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-emerald-950/80 text-emerald-400 border border-emerald-800">
+                Rule Pacing: Active
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mt-0.5 font-sans">
+              Task counts, linked progress percentage allocations, effort estimates ({totalWbsEffortHours} hrs total), and earned value contribution
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => onNavigateTab("wbs")}
+              className="text-xs bg-[#141C2E] hover:bg-slate-800 text-sky-400 hover:text-white border border-slate-700 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer font-mono"
+            >
+              <span>Manage Status Rules</span>
+              <ArrowUpRight className="w-3.5 h-3.5 text-sky-400" />
+            </button>
+          </div>
+        </div>
+
+        {/* Dynamic Proportional Distribution Bar */}
+        <div className="mt-4">
+          <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 mb-1.5">
+            <span className="text-slate-300">
+              WBS Volume Distribution ({wbsItems.length} Total Deliverables · {totalWbsEffortHours}h Total Effort)
+            </span>
+            <span>{statusStats.filter((s) => s.count > 0).length} active workflow states</span>
+          </div>
+          <div className="w-full h-3.5 bg-slate-900 rounded-full overflow-hidden flex border border-slate-800 shadow-inner">
+            {statusStats.map((stat) => {
+              if (stat.count === 0) return null;
+              return (
+                <div
+                  key={stat.key}
+                  style={{ width: `${Math.max(stat.percentOfTotal, 2)}%` }}
+                  className={`h-full transition-all duration-300 relative group cursor-pointer ${stat.dotColor}`}
+                  title={`${stat.label}: ${stat.count} items (${stat.percentOfTotal}%) - Auto Progress: ${stat.progressPercent}%`}
+                  onClick={() => setWbsFilter(stat.key)}
+                />
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Status Metrics Cards Grid */}
+        <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {statusStats.map((stat) => {
+            const isFilterSelected = wbsFilter === stat.key;
+            return (
+              <div
+                key={stat.key}
+                onClick={() => setWbsFilter(isFilterSelected ? "All" : stat.key)}
+                className={`p-3 rounded-lg border transition-all cursor-pointer ${
+                  isFilterSelected
+                    ? "bg-sky-500/10 border-sky-500 ring-1 ring-sky-400"
+                    : "bg-[#060911] border-[#1E293B] hover:border-slate-700 hover:bg-[#0d1424]"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-1 mb-2">
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border truncate ${stat.badgeBg} ${stat.badgeText} ${stat.badgeBorder}`}
+                  >
+                    {stat.label}
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-400 shrink-0">
+                    {stat.progressPercent}%
+                  </span>
+                </div>
+
+                <div className="flex items-baseline justify-between mt-1">
+                  <span className="text-xl font-bold font-mono text-white">{stat.count}</span>
+                  <span className="text-[10px] font-mono text-slate-400">{stat.percentOfTotal}%</span>
+                </div>
+
+                <div className="mt-2 pt-2 border-t border-slate-800/80 flex flex-col gap-1 text-[10px] font-mono">
+                  <div className="flex justify-between text-slate-400">
+                    <span>Effort:</span>
+                    <span className="text-slate-200 font-semibold">{stat.totalEstimatedHours}h</span>
+                  </div>
+                  <div className="flex justify-between text-slate-400">
+                    <span>Value:</span>
+                    <span className="text-emerald-400 font-semibold">${(stat.earnedValueContribution / 1000).toFixed(1)}k</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Bottom Operational Section: WBS Tracker & RAID Intelligence */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* WBS Deliverables & Delivery Health (2 Cols) */}
-        <div className="lg:col-span-2 bg-[#0B0F19] rounded-xl border border-[#1E293B] p-5 flex flex-col justify-between shadow-xs">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        {/* WBS Deliverables & Delivery Health (2 Cols on XL) */}
+        <div className="xl:col-span-2 bg-[#0B0F19] rounded-xl border border-[#1E293B] p-4 sm:p-5 flex flex-col justify-between shadow-xs">
           <div>
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#1E293B]">
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <h3 className="text-xs font-bold text-white uppercase tracking-wider font-mono">
                     WBS Work Packages & Delivery Health
                   </h3>
@@ -566,11 +726,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   )}
                 </div>
                 <p className="text-xs text-slate-400 mt-0.5 font-sans">
-                  Hierarchical decomposition and operational completion status
+                  Hierarchical decomposition, assigned stakeholders, and automated progress levels
                 </p>
               </div>
               <div className="flex items-center gap-1.5 flex-wrap">
-                {["All", "Milestone", "Epic", "Feature", "Task"].map((filter) => (
+                {["All", "Milestone", "Task"].map((filter) => (
                   <button
                     key={filter}
                     onClick={() => setWbsFilter(filter)}
@@ -581,6 +741,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     }`}
                   >
                     {filter}
+                  </button>
+                ))}
+                {statusConfigs.map((cfg) => (
+                  <button
+                    key={cfg.key}
+                    onClick={() => setWbsFilter(cfg.key)}
+                    className={`text-xs px-2 py-1 rounded-md transition-colors cursor-pointer font-mono flex items-center gap-1 border ${
+                      wbsFilter === cfg.key
+                        ? `${cfg.badgeBg} ${cfg.badgeText} ${cfg.badgeBorder} font-bold ring-1 ring-sky-400`
+                        : "bg-[#141C2E] text-slate-400 hover:text-slate-200 border-slate-800"
+                    }`}
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full ${cfg.dotColor}`} />
+                    <span>{cfg.label}</span>
                   </button>
                 ))}
                 <button
@@ -594,7 +768,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
 
             <div className="mt-3 overflow-x-auto">
-              <table className="w-full text-left text-xs border-separate border-spacing-y-2">
+              <table className="w-full text-left text-xs border-separate border-spacing-y-2 min-w-[540px]">
                 <thead>
                   <tr className="text-slate-400 text-[10px] uppercase font-mono">
                     <th className="pb-1 pl-2">WBS ID</th>
@@ -665,32 +839,31 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             {getStakeholderName(item.assignedStakeholderId)}
                           </td>
                           <td className="py-2.5">
-                            <span
-                              className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-medium border ${
-                                item.status === "Done"
-                                  ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30"
-                                  : item.status === "Demoable"
-                                  ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/30"
-                                  : item.status === "In Progress"
-                                  ? "bg-blue-500/20 text-blue-300 border-blue-500/30"
-                                  : item.status === "Blocked"
-                                  ? "bg-amber-500/20 text-amber-300 border-amber-500/30"
-                                  : "bg-purple-500/20 text-purple-300 border-purple-500/30"
-                              }`}
-                            >
-                              {item.status}
-                            </span>
+                            {(() => {
+                              const statusCfg = getStatusConfig(item.status, statusConfigs);
+                              return (
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-medium border inline-flex items-center gap-1.5 ${statusCfg.badgeBg} ${statusCfg.badgeText} ${statusCfg.badgeBorder}`}
+                                >
+                                  <span className={`w-1.5 h-1.5 rounded-full ${statusCfg.dotColor}`} />
+                                  <span>{statusCfg.label}</span>
+                                  <span className="opacity-80">({statusCfg.progressPercent}%)</span>
+                                </span>
+                              );
+                            })()}
                           </td>
                           <td className="py-2.5 pr-3 text-right">
-                            <span
-                              className={`inline-block w-2.5 h-2.5 rounded-full ${
-                                item.status === "Done"
-                                  ? "bg-emerald-400"
-                                  : item.status === "Blocked"
-                                  ? "bg-amber-400 animate-pulse"
-                                  : "bg-emerald-400"
-                              }`}
-                            />
+                            {(() => {
+                              const statusCfg = getStatusConfig(item.status, statusConfigs);
+                              return (
+                                <span
+                                  className={`inline-block w-2.5 h-2.5 rounded-full ${statusCfg.dotColor} ${
+                                    item.status === "Blocked" ? "animate-pulse ring-2 ring-rose-500/40" : ""
+                                  }`}
+                                  title={`Status: ${statusCfg.label} (${statusCfg.progressPercent}% auto progress)`}
+                                />
+                              );
+                            })()}
                           </td>
                         </tr>
                       );

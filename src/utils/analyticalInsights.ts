@@ -255,7 +255,11 @@ export function calculateLaborEfficiencyAnalytics(
   stakeholders.forEach((s) => {
     const dept = s.department || "Core Engineering";
     const existing = deptMap.get(dept) || { hourlyBurn: 0, headcount: 0, assignedTasks: 0 };
-    const tasksCount = wbsItems.filter((i) => i.assignedStakeholderId === s.id).length;
+    const tasksCount = wbsItems.filter(
+      (i) =>
+        (i.assignedStakeholderIds && i.assignedStakeholderIds.includes(s.id)) ||
+        i.assignedStakeholderId === s.id
+    ).length;
     deptMap.set(dept, {
       hourlyBurn: existing.hourlyBurn + (s.hourlyRate || 0),
       headcount: existing.headcount + 1,

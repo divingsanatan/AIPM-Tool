@@ -1,6 +1,22 @@
 export type WbsType = "Milestone" | "Epic" | "Feature" | "User Story" | "Task" | "Subtask";
 
-export type WorkItemStatus = "To Do" | "In Progress" | "Demoable" | "Blocked" | "Done";
+export type BuiltInStatus = "Done" | "Demoable" | "Blocked" | "In Progress" | "To Do" | "Backlog";
+export type WorkItemStatus = BuiltInStatus | string;
+
+export interface StatusConfig {
+  id: string;
+  key: string; // The status string stored on WbsItem.status
+  label: string; // Display label: "DONE", "DEMO READY", "BLOCKED", "IN PROGRESS", "TO DO", "BACKLOG"
+  progressPercent: number; // 0 to 100
+  color: string;
+  dotColor: string;
+  badgeBg: string;
+  badgeText: string;
+  badgeBorder: string;
+  isDefault: boolean;
+  order: number;
+  description?: string;
+}
 
 export type PriorityLevel = "Critical" | "High" | "Medium" | "Low";
 
@@ -9,6 +25,16 @@ export interface GlobalFilterState {
   assigneeId: string; // "ALL" | "UNASSIGNED" | string
   priority: string; // "ALL" | PriorityLevel
   searchQuery?: string;
+}
+
+export interface Sprint {
+  id: string;
+  name: string; // e.g. "Sprint 7 (7/27 - 8/9)"
+  startDate: string;
+  endDate: string;
+  status: "Active" | "Planned" | "Completed";
+  projectGroup: string; // e.g. "Flutter Project", "Angular Project", "Core Banking Platform"
+  taskCount?: number;
 }
 
 export interface WbsItem {
@@ -24,13 +50,22 @@ export interface WbsItem {
   plannedBudget: number; // in USD
   actualCost: number; // in USD (derived from assigned stakeholder hourly rate * actualHours)
   progressPercent: number; // 0 to 100
-  assignedStakeholderId?: string;
+  assignedStakeholderId?: string; // Primary assignee
+  assignedStakeholderIds?: string[]; // Multiple assigned stakeholders
   startDate: string;
   dueDate: string;
   isCriticalPath?: boolean;
   description?: string;
   isRolledUp?: boolean;
   childCount?: number;
+  contributorStakeholderIds?: string[];
+  earnedValue?: number;
+  costVariance?: number;
+  remainingHours?: number;
+  sprintId?: string;
+  sprintName?: string;
+  checklist?: { id: string; text: string; completed: boolean }[];
+  dependencies?: string[];
 }
 
 export interface Stakeholder {

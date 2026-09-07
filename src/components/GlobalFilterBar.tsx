@@ -80,31 +80,31 @@ export const GlobalFilterBar: React.FC<GlobalFilterBarProps> = ({
     >
       {/* Top Header Row */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2.5 border-b border-[#1E293B]">
-        <div className="flex items-center gap-2.5">
-          <div className="p-1.5 rounded-lg bg-[#38BDF8]/15 text-[#38BDF8] border border-[#38BDF8]/30">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="p-1.5 rounded-lg bg-[#38BDF8]/15 text-[#38BDF8] border border-[#38BDF8]/30 shrink-0">
             <Filter className="h-4 w-4" />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-white uppercase tracking-wider font-mono">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-bold text-white uppercase tracking-wider font-mono whitespace-nowrap">
                 Persistent Global Filter
               </span>
-              <span className="px-2 py-0.2 rounded text-[10px] font-mono font-semibold bg-[#060911] text-[#38BDF8] border border-[#1E293B]">
+              <span className="px-2 py-0.2 rounded text-[10px] font-mono font-semibold bg-[#060911] text-[#38BDF8] border border-[#1E293B] shrink-0">
                 Dashboard & WBS Synchronized
               </span>
               {hasActiveFilters && (
-                <span className="px-2 py-0.2 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse">
+                <span className="px-2 py-0.2 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse shrink-0">
                   {activeFilterCount} Active
                 </span>
               )}
             </div>
-            <p className="text-[11px] text-slate-400 font-sans">
+            <p className="text-[11px] text-slate-400 font-sans truncate">
               Filter deliverables across the executive telemetry and granular WBS breakdown
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
           {hasActiveFilters && (
             <button
               id="clear-global-filters-btn"

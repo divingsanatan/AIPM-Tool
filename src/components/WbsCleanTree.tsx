@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { WbsItem, Stakeholder, WorkItemStatus, PriorityLevel } from "../types";
+import { WbsItem, Stakeholder, WorkItemStatus, PriorityLevel, WbsType, StatusConfig } from "../types";
 import {
   List,
   LayoutGrid,
@@ -26,9 +26,28 @@ import {
   Filter,
   Columns,
   Sparkles,
+  Users,
+  Layers,
+  Inbox,
+  Sliders,
 } from "lucide-react";
-import { getParentId } from "../utils/wbsRollup";
+import {
+  getParentId,
+  suggestChildType,
+  getChildTypeLabel,
+  getHierarchyLevelInfo,
+  getWbsTypeFriendlyName,
+  getCompactNomenclature,
+  getItemAssignees,
+  isAssignedToHierarchy,
+} from "../utils/wbsRollup";
 import { getItemPriority } from "../utils/filterUtils";
+import {
+  DEFAULT_STATUS_CONFIGS,
+  getStatusConfig,
+  getProgressForStatus,
+} from "../utils/statusConfig";
+import { StatusManagerModal } from "./StatusManagerModal";
 
 interface WbsCleanTreeProps {
   wbsItems: WbsItem[];
@@ -36,8 +55,12 @@ interface WbsCleanTreeProps {
   onAddWbsItem: (item: WbsItem) => void;
   onUpdateWbsItem: (item: WbsItem) => void;
   onDeleteWbsItem: (id: string) => void;
-  onOpenAddModal: (parentId?: string | null, statusPreset?: WorkItemStatus) => void;
+  onOpenAddModal: (parentId?: string | null, statusPreset?: WorkItemStatus, parentItem?: WbsItem) => void;
   onOpenEditModal: (item: WbsItem) => void;
+  statusConfigs?: StatusConfig[];
+  onUpdateStatusConfigs?: (newConfigs: StatusConfig[]) => void;
+  onSyncAllTasks?: () => void;
+  onApplyStatusProgressToTasks?: (statusKey: string, newProgress: number) => void;
 }
 
 export type WbsTabType = "List" | "Board" | "Calendar" | "Mind Map" | "Sprint Reporting";
@@ -50,25 +73,81 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
   onDeleteWbsItem,
   onOpenAddModal,
   onOpenEditModal,
+  statusConfigs = DEFAULT_STATUS_CONFIGS,
+  onUpdateStatusConfigs,
+  onSyncAllTasks,
+  onApplyStatusProgressToTasks,
 }) => {
   const [activeTab, setActiveTab] = useState<WbsTabType>("List");
   const [showDetailedEvm, setShowDetailedEvm] = useState(false);
   const [groupBy, setGroupBy] = useState<"status" | "hierarchy">("status");
+  const [isStatusManagerOpen, setIsStatusManagerOpen] = useState(false);
+  const [focusedStatusForConfig, setFocusedStatusForConfig] = useState<string | undefined>(undefined);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
+    "Done": true,
     "Demoable": true,
+    "Blocked": true,
     "In Progress": true,
     "To Do": true,
-    "Blocked": true,
-    "Done": true,
+    "Backlog": true,
     "all": true,
   });
   const [expandedParents, setExpandedParents] = useState<Record<string, boolean>>({
     "wbs-1": true,
     "wbs-2": true,
     "wbs-2-1": true,
+    "wbs-2-2": true,
     "wbs-demo-1": true,
     "wbs-demo-2": true,
   });
+
+  const [nomenclatureStyle, setNomenclatureStyle] = useState<"smart" | "micro">("smart");
+  const [quickAssignItemId, setQuickAssignItemId] = useState<string | null>(null);
+  const [quickAssignSearch, setQuickAssignSearch] = useState("");
+  const [quickAssignFilter, setQuickAssignFilter] = useState<"all" | "unassigned">("all");
+  const [selectedLevelFilter, setSelectedLevelFilter] = useState<WbsType | "ALL">("ALL");
+
+  const handleToggleAssignee = (item: WbsItem, stakeholderId: string) => {
+    const currentAssignees =
+      item.assignedStakeholderIds && item.assignedStakeholderIds.length > 0
+        ? [...item.assignedStakeholderIds]
+        : item.assignedStakeholderId
+        ? [item.assignedStakeholderId]
+        : [];
+
+    let nextIds: string[];
+    if (currentAssignees.includes(stakeholderId)) {
+      nextIds = currentAssignees.filter((id) => id !== stakeholderId);
+    } else {
+      nextIds = [...currentAssignees, stakeholderId];
+    }
+
+    const updated: WbsItem = {
+      ...item,
+      assignedStakeholderIds: nextIds,
+      assignedStakeholderId: nextIds[0] || undefined,
+      contributorStakeholderIds: nextIds.slice(1),
+    };
+    onUpdateWbsItem(updated);
+  };
+
+  const handleSetLeadAssignee = (item: WbsItem, stakeholderId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const currentAssignees =
+      item.assignedStakeholderIds && item.assignedStakeholderIds.length > 0
+        ? [...item.assignedStakeholderIds]
+        : item.assignedStakeholderId
+        ? [item.assignedStakeholderId]
+        : [];
+    const nextIds = [stakeholderId, ...currentAssignees.filter((id) => id !== stakeholderId)];
+    const updated: WbsItem = {
+      ...item,
+      assignedStakeholderIds: nextIds,
+      assignedStakeholderId: stakeholderId,
+      contributorStakeholderIds: nextIds.slice(1),
+    };
+    onUpdateWbsItem(updated);
+  };
 
   // Helper to format short date as M/D/YY (e.g. 8/21/26) matching screenshot
   const formatShortDate = (dateStr?: string) => {
@@ -93,12 +172,6 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
     setExpandedSections((prev) => ({ ...prev, [section]: !prev[section] }));
   };
 
-  // Metric computations for the 3 clean cards
-  const totalTasks = wbsItems.length;
-  const unfinishedTasks = wbsItems.filter((i) => i.status !== "Done");
-  const missingAssigneeTasks = wbsItems.filter((i) => !i.assignedStakeholderId);
-  const missingEffortTasks = wbsItems.filter((i) => !i.estimatedHours || i.estimatedHours === 0);
-
   // Group child items by parentId
   const childrenMap = useMemo(() => {
     const map = new Map<string, WbsItem[]>();
@@ -111,6 +184,61 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
     });
     return map;
   }, [wbsItems]);
+
+  // Leaf work packages (items with no children, whose estimates constitute 100% of project work)
+  const leafItems = useMemo(() => {
+    return wbsItems.filter((i) => !childrenMap.has(i.id) || childrenMap.get(i.id)!.length === 0);
+  }, [wbsItems, childrenMap]);
+
+  // Dynamic Total Effort: Sum of time estimates added to all WBS (in hours)
+  const totalEffortHours = useMemo(() => {
+    return Math.round(
+      leafItems.reduce((sum, i) => sum + (Number(i.estimatedHours) || 0), 0)
+    );
+  }, [leafItems]);
+
+  // Total actual hours logged across work packages
+  const totalActualHours = useMemo(() => {
+    return Math.round(
+      leafItems.reduce((sum, i) => sum + (Number(i.actualHours) || 0), 0)
+    );
+  }, [leafItems]);
+
+  // Tasks missing effort estimate (0 or missing hours)
+  const missingEffortTasks = useMemo(() => {
+    return leafItems.filter((i) => !i.estimatedHours || i.estimatedHours === 0);
+  }, [leafItems]);
+
+  // Backlog items: explicitly marked Backlog OR work items not assigned to any milestone, features or higher hierarchy
+  const backlogItems = useMemo(() => {
+    return wbsItems.filter(
+      (i) => i.status === "Backlog" || !isAssignedToHierarchy(i, wbsItems)
+    );
+  }, [wbsItems]);
+
+  // Hierarchy items: assigned to a milestone, feature, or higher hierarchy
+  const hierarchyItems = useMemo(() => {
+    return wbsItems.filter(
+      (i) => i.status !== "Backlog" && isAssignedToHierarchy(i, wbsItems)
+    );
+  }, [wbsItems]);
+
+  // Metric computations for the 3 clean cards
+  const totalTasks = wbsItems.length;
+  const unfinishedTasks = useMemo(() => wbsItems.filter((i) => i.status !== "Done"), [wbsItems]);
+
+  // Check if an item has assignees (supporting both single lead & multi-stakeholders)
+  const isItemAssigned = (item: WbsItem) =>
+    Boolean(
+      item.assignedStakeholderId ||
+        (item.assignedStakeholderIds && item.assignedStakeholderIds.length > 0)
+    );
+
+  const missingAssigneeTasks = useMemo(() => {
+    return wbsItems.filter((i) => !isItemAssigned(i));
+  }, [wbsItems]);
+
+  const assignedTasksCount = totalTasks - missingAssigneeTasks.length;
 
   // Priority Flag component
   const renderPriorityFlag = (item: WbsItem) => {
@@ -144,48 +272,564 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
 
   // Status Pill Label format
   const getStatusLabel = (status: WorkItemStatus) => {
-    switch (status) {
-      case "Demoable":
-        return "DEMO READY (LOCAL)";
-      case "In Progress":
-        return "IN PROGRESS";
-      case "To Do":
-        return "TO DO";
-      case "Blocked":
-        return "BLOCKED";
-      case "Done":
-        return "DONE";
-      default:
-        return String(status).toUpperCase();
-    }
+    const cfg = getStatusConfig(status, statusConfigs);
+    return cfg.label;
   };
 
   // Status icon
   const renderStatusIcon = (status: WorkItemStatus) => {
-    switch (status) {
-      case "Demoable":
-        return <Clock className="h-3.5 w-3.5 text-amber-400" />;
-      case "In Progress":
-        return <Clock className="h-3.5 w-3.5 text-blue-400" />;
-      case "Done":
-        return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />;
-      case "Blocked":
-        return <AlertTriangle className="h-3.5 w-3.5 text-rose-400" />;
-      case "To Do":
-      default:
-        return <Clock className="h-3.5 w-3.5 text-slate-400" />;
+    const cfg = getStatusConfig(status, statusConfigs);
+    if (cfg.key === "Done") {
+      return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />;
+    } else if (cfg.key === "Demoable") {
+      return <Clock className="h-3.5 w-3.5 text-amber-400" />;
+    } else if (cfg.key === "Blocked") {
+      return <AlertTriangle className="h-3.5 w-3.5 text-rose-400" />;
+    } else if (cfg.key === "In Progress") {
+      return <Clock className="h-3.5 w-3.5 text-blue-400" />;
+    } else if (cfg.key === "To Do") {
+      return <Clock className="h-3.5 w-3.5 text-slate-400" />;
+    } else if (cfg.key === "Backlog") {
+      return <Layers className="h-3.5 w-3.5 text-indigo-400" />;
     }
+    return <span className={`inline-block w-2.5 h-2.5 rounded-full ${cfg.dotColor}`} />;
   };
 
-  // Group items by status
-  const statusGroups: { status: WorkItemStatus; label: string; items: WbsItem[] }[] = useMemo(() => {
-    const statuses: WorkItemStatus[] = ["Demoable", "In Progress", "To Do", "Blocked", "Done"];
-    return statuses.map((st) => ({
-      status: st,
-      label: getStatusLabel(st),
-      items: wbsItems.filter((i) => i.status === st),
-    }));
-  }, [wbsItems]);
+  // Intelligent quick-status transition with automatic progress marking
+  const handleQuickStatusChange = (item: WbsItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    let nextStatus: WorkItemStatus = "In Progress";
+
+    if (item.status === "Backlog") {
+      nextStatus = "To Do";
+    } else if (item.status === "To Do") {
+      nextStatus = "In Progress";
+    } else if (item.status === "In Progress") {
+      nextStatus = "Demoable";
+    } else if (item.status === "Demoable") {
+      nextStatus = "Done";
+    } else if (item.status === "Blocked") {
+      nextStatus = "In Progress";
+    } else if (item.status === "Done") {
+      nextStatus = "In Progress";
+    } else {
+      nextStatus = "Done";
+    }
+
+    // Automatically mark progress linked to the status
+    const nextProgress = getProgressForStatus(nextStatus, statusConfigs);
+
+    onUpdateWbsItem({
+      ...item,
+      status: nextStatus,
+      progressPercent: nextProgress,
+    });
+  };
+
+  // Recursive deliverable and task row renderer supporting arbitrary hierarchy depth
+  const renderDeliverableRow = (
+    item: WbsItem,
+    depth = 0,
+    currentSectionStatus: WorkItemStatus
+  ): React.ReactNode => {
+    const children = childrenMap.get(item.id) || [];
+    const hasChildren = children.length > 0;
+    const isExpanded = expandedParents[item.id] ?? true;
+    const stakeholder = getStakeholder(item.assignedStakeholderId);
+    const parentId = getParentId(item, wbsItems);
+    const parentItem = parentId ? wbsItems.find((i) => i.id === parentId) : null;
+    const blockedChildrenCount = children.filter((c) => c.status === "Blocked").length;
+    const nom = getCompactNomenclature(item.type);
+    const itemAssignees = getItemAssignees(item, stakeholders);
+
+    return (
+      <React.Fragment key={item.id}>
+        <tr
+          className={`group transition-colors ${
+            depth === 0
+              ? "hover:bg-[#0E1526]/80"
+              : "hover:bg-[#0E1526]/60 bg-[#0B0F19]/40 border-t border-[#1E293B]/20"
+          }`}
+        >
+          {/* Name column */}
+          <td className="py-2.5 pr-3" style={{ paddingLeft: `${8 + depth * 18}px` }}>
+            <div className="flex items-center gap-2">
+              {/* Grip dots on hover */}
+              <div className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-600 cursor-grab -ml-1 shrink-0">
+                <GripVertical className="h-3.5 w-3.5" />
+              </div>
+
+              {/* Expand/Collapse Chevron */}
+              {hasChildren ? (
+                <button
+                  type="button"
+                  onClick={() => toggleParent(item.id)}
+                  className="text-slate-400 hover:text-white p-0.5 transition-colors cursor-pointer shrink-0"
+                  title={isExpanded ? "Collapse subtasks" : "Expand subtasks"}
+                >
+                  {isExpanded ? (
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  ) : (
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              ) : (
+                <span className="w-4 inline-block shrink-0" />
+              )}
+
+              {/* Status Indicator / Quick Advance Button */}
+              <button
+                type="button"
+                onClick={(e) => handleQuickStatusChange(item, e)}
+                className="shrink-0 p-0.5 rounded hover:bg-slate-800 transition-colors cursor-pointer"
+                title={`Status: ${item.status} (Click to advance/toggle)`}
+              >
+                {renderStatusIcon(item.status)}
+              </button>
+
+              {/* Space-Saving Nomenclature Badge */}
+              <span
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setNomenclatureStyle((prev) => (prev === "smart" ? "micro" : "smart"));
+                }}
+                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold tracking-tight shrink-0 border select-none cursor-pointer transition-all hover:scale-105 shadow-xs ${nom.bgColor} ${nom.color} ${nom.borderColor}`}
+                title={`${nom.fullTitle} • WBS ${item.wbsCode} • Click to toggle badge size`}
+              >
+                <span className="text-[11px] leading-none">{nom.symbol}</span>
+                <span>{nomenclatureStyle === "smart" ? nom.short : nom.code}</span>
+              </span>
+
+              {/* WBS Code */}
+              <span className="text-[11px] font-mono text-slate-400 shrink-0 font-medium">
+                {item.wbsCode}
+              </span>
+
+              {/* Title & Hierarchy Breadcrumb */}
+              <div className="min-w-0 flex-1">
+                {depth === 0 && parentItem && (
+                  <div className="text-[10px] text-slate-500 font-mono flex items-center gap-1 mb-0.5 truncate">
+                    <CornerDownRight className="h-2.5 w-2.5 text-slate-600 shrink-0" />
+                    <span className="truncate">
+                      Part of {parentItem.wbsCode} {parentItem.title}
+                    </span>
+                  </div>
+                )}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span
+                    className={`font-semibold text-xs hover:text-sky-300 transition-colors cursor-pointer truncate max-w-md ${
+                      item.status === "Done" ? "text-slate-400 line-through" : "text-white"
+                    }`}
+                    onClick={() => onOpenEditModal(item)}
+                  >
+                    {item.title}
+                  </span>
+
+                  {/* Subtask count badge */}
+                  {hasChildren && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] text-slate-400 font-mono px-1.5 py-0.2 rounded bg-slate-800/60 border border-slate-700/40">
+                      <CornerDownRight className="h-2.5 w-2.5 text-slate-500" />
+                      <span>{children.length}</span>
+                    </span>
+                  )}
+
+                  {/* Blocked subtasks alert badge */}
+                  {blockedChildrenCount > 0 && item.status !== "Blocked" && (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-rose-300 font-mono px-1.5 py-0.2 rounded bg-rose-500/10 border border-rose-500/30 font-medium">
+                      <AlertTriangle className="h-2.5 w-2.5 text-rose-400" />
+                      <span>{blockedChildrenCount} blocked</span>
+                    </span>
+                  )}
+
+                  {/* Status pill if different from parent section */}
+                  {item.status !== currentSectionStatus && (
+                    <span
+                      className={`text-[10px] font-mono px-1.5 py-0.2 rounded border font-medium ${
+                        item.status === "Blocked"
+                          ? "bg-rose-500/15 text-rose-300 border-rose-500/30"
+                          : item.status === "In Progress"
+                          ? "bg-blue-500/15 text-blue-300 border-blue-500/30"
+                          : item.status === "Done"
+                          ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                          : item.status === "Demoable"
+                          ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                          : "bg-slate-700/40 text-slate-300 border-slate-600/40"
+                      }`}
+                    >
+                      {item.status}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Quick hover action buttons */}
+              {(() => {
+                const childType = suggestChildType(item.type);
+                const childLabel = childType === "User Story" ? "Story" : childType;
+                return (
+                  <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 ml-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExpandedParents((prev) => ({ ...prev, [item.id]: true }));
+                        onOpenAddModal(item.id, item.status, item);
+                      }}
+                      className="p-1 rounded bg-[#141C2E] hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700 transition-colors cursor-pointer"
+                      title={`Create ${childLabel} under [${item.wbsCode}] ${item.title}`}
+                    >
+                      <Plus className="h-3 w-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onOpenEditModal(item)}
+                      className="p-1 rounded bg-[#141C2E] hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700 transition-colors cursor-pointer"
+                      title="Edit work item"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (confirm(`Delete "${item.title}"?`)) {
+                          onDeleteWbsItem(item.id);
+                        }
+                      }}
+                      className="p-1 rounded bg-[#141C2E] hover:bg-rose-950 text-slate-400 hover:text-rose-400 border border-slate-700 transition-colors cursor-pointer"
+                      title="Delete work item"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
+                );
+              })()}
+            </div>
+          </td>
+
+          {/* Assignee column */}
+          <td className="py-2.5 px-3 relative">
+            {itemAssignees.length === 0 ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setQuickAssignSearch("");
+                  setQuickAssignItemId(quickAssignItemId === item.id ? null : item.id);
+                }}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#0B0F19] border border-dashed border-[#1E293B] hover:border-sky-500/60 hover:text-sky-300 text-slate-500 text-[11px] cursor-pointer transition-colors shadow-xs"
+                title="Assign team member(s)"
+              >
+                <UserPlus className="h-3.5 w-3.5" />
+                <span>+ Assign</span>
+              </button>
+            ) : itemAssignees.length === 1 ? (
+              <div className="relative inline-block">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setQuickAssignSearch("");
+                    setQuickAssignItemId(quickAssignItemId === item.id ? null : item.id);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-[#0B0F19] border border-[#1E293B] hover:border-sky-500/60 text-slate-200 text-[11px] cursor-pointer transition-colors max-w-44 group/assignee"
+                  title={`${itemAssignees[0].name} (${itemAssignees[0].role}) • Click to add or manage team assignees`}
+                >
+                  <div className="h-4 w-4 rounded-full bg-sky-500/20 text-sky-400 flex items-center justify-center text-[9px] font-bold shrink-0">
+                    {itemAssignees[0].name.charAt(0)}
+                  </div>
+                  <span className="truncate">{itemAssignees[0].name}</span>
+                  <div className="h-3.5 w-3.5 rounded bg-slate-800 group-hover/assignee:bg-sky-950 flex items-center justify-center text-slate-400 group-hover/assignee:text-sky-300 ml-0.5 shrink-0 transition-colors" title="Add more assignees">
+                    <Plus className="h-2.5 w-2.5" />
+                  </div>
+                </button>
+              </div>
+            ) : (
+              <div className="relative inline-block">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setQuickAssignSearch("");
+                    setQuickAssignItemId(quickAssignItemId === item.id ? null : item.id);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-[#0B0F19] border border-[#1E293B] hover:border-sky-500/60 text-slate-200 text-[11px] cursor-pointer transition-colors group/assignee"
+                  title={`Assigned Stakeholders:\n${itemAssignees
+                    .map((s, idx) => `${idx === 0 ? "★ Lead: " : "• "}${s.name} (${s.role})`)
+                    .join("\n")}\nClick to add/remove assignees`}
+                >
+                  <div className="flex -space-x-1.5 overflow-hidden shrink-0">
+                    {itemAssignees.slice(0, 3).map((stk, idx) => (
+                      <div
+                        key={stk.id}
+                        className={`inline-block h-4.5 w-4.5 rounded-full ring-1 ring-[#090D16] flex items-center justify-center text-[8.5px] font-bold shrink-0 ${
+                          idx === 0
+                            ? "bg-sky-500/30 text-sky-300"
+                            : "bg-purple-500/30 text-purple-300"
+                        }`}
+                        title={stk.name}
+                      >
+                        {stk.name.charAt(0)}
+                      </div>
+                    ))}
+                  </div>
+                  <span className="text-[11px] font-medium text-sky-300 truncate max-w-[110px]">
+                    {itemAssignees[0].name.split(" ")[0]} +{itemAssignees.length - 1}
+                  </span>
+                  <div className="h-3.5 w-3.5 rounded bg-slate-800 group-hover/assignee:bg-sky-950 flex items-center justify-center text-slate-400 group-hover/assignee:text-sky-300 ml-0.5 shrink-0 transition-colors" title="Manage assignees">
+                    <Plus className="h-2.5 w-2.5" />
+                  </div>
+                </button>
+              </div>
+            )}
+
+            {/* Quick Assign Dropdown Popover */}
+            {quickAssignItemId === item.id && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setQuickAssignItemId(null);
+                  }}
+                />
+                <div
+                  className="absolute left-0 top-full mt-1 w-72 bg-[#0F172A] border border-slate-700 rounded-lg shadow-2xl p-2.5 z-50 text-left animate-in fade-in zoom-in-95 duration-100"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-slate-800">
+                    <div className="text-[11px] font-bold text-slate-200 flex items-center gap-1.5">
+                      <Users className="h-3.5 w-3.5 text-sky-400" />
+                      <span>Assign Multiple Stakeholders</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setQuickAssignItemId(null)}
+                      className="text-slate-400 hover:text-white text-xs p-0.5 rounded hover:bg-slate-800 cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  {/* Teammate Filter Search */}
+                  <div className="mb-1.5">
+                    <input
+                      type="text"
+                      value={quickAssignSearch}
+                      onChange={(e) => setQuickAssignSearch(e.target.value)}
+                      placeholder="Filter by name or role..."
+                      className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-[11px] text-white placeholder-slate-500 focus:outline-hidden focus:border-sky-500 font-sans"
+                    />
+                  </div>
+
+                  <div className="max-h-52 overflow-y-auto space-y-0.5 pr-0.5">
+                    {stakeholders
+                      .filter((s) => {
+                        if (!quickAssignSearch.trim()) return true;
+                        const q = quickAssignSearch.toLowerCase();
+                        return (
+                          s.name.toLowerCase().includes(q) ||
+                          s.role.toLowerCase().includes(q) ||
+                          s.department.toLowerCase().includes(q)
+                        );
+                      })
+                      .map((stk) => {
+                        const isAssigned = itemAssignees.some((a) => a.id === stk.id);
+                        const isLead = itemAssignees[0]?.id === stk.id;
+
+                        return (
+                          <div
+                            key={stk.id}
+                            onClick={() => handleToggleAssignee(item, stk.id)}
+                            className={`flex items-center justify-between px-2 py-1.5 rounded cursor-pointer transition-colors text-xs ${
+                              isAssigned
+                                ? "bg-sky-950/60 border border-sky-700/60 text-white"
+                                : "hover:bg-slate-800/80 text-slate-300 border border-transparent"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <input
+                                type="checkbox"
+                                checked={isAssigned}
+                                onChange={() => {}}
+                                className="rounded border-slate-700 text-sky-500 focus:ring-0 bg-slate-900 cursor-pointer h-3.5 w-3.5 shrink-0"
+                              />
+                              <div
+                                className={`h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 ${
+                                  isLead
+                                    ? "bg-sky-500 text-slate-950 font-extrabold"
+                                    : isAssigned
+                                    ? "bg-sky-900 text-sky-200"
+                                    : "bg-slate-800 text-slate-400"
+                                }`}
+                              >
+                                {stk.name.charAt(0)}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-[11px] font-medium truncate">{stk.name}</div>
+                                <div className="text-[9px] text-slate-400 truncate">{stk.role}</div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0 ml-1">
+                              {isAssigned && (
+                                isLead ? (
+                                  <span className="text-[8px] font-mono px-1 py-0.2 rounded bg-sky-500/20 text-sky-300 font-bold flex items-center gap-0.5">
+                                    ★ Lead
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleSetLeadAssignee(item, stk.id, e)}
+                                    className="text-[8px] text-slate-400 hover:text-sky-300 px-1 py-0.2 rounded hover:bg-slate-800 transition-colors"
+                                    title="Make Primary Lead"
+                                  >
+                                    Make Lead
+                                  </button>
+                                )
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+
+                  <div className="mt-2 pt-1.5 border-t border-slate-800 flex items-center justify-between text-[10px]">
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-400 font-mono">
+                        {itemAssignees.length} assigned
+                      </span>
+                      {itemAssignees.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onUpdateWbsItem({
+                              ...item,
+                              assignedStakeholderIds: [],
+                              assignedStakeholderId: undefined,
+                              contributorStakeholderIds: [],
+                            });
+                          }}
+                          className="text-rose-400 hover:underline cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setQuickAssignItemId(null)}
+                      className="px-2.5 py-0.5 bg-sky-600 hover:bg-sky-500 text-white rounded font-medium text-[10px] transition-colors cursor-pointer"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </td>
+
+          {/* Due Date column (Salmon/Red) */}
+          <td className="py-2.5 px-3 font-mono text-[11px] text-[#F87171]">
+            {formatShortDate(item.dueDate)}
+          </td>
+
+          {/* Priority column */}
+          <td className="py-2.5 px-3">{renderPriorityFlag(item)}</td>
+
+          {/* Detailed EVM columns */}
+          {showDetailedEvm && (
+            <>
+              <td className="py-2.5 px-3 font-mono text-[11px] text-slate-300">
+                <span className="text-sky-400 font-semibold">{item.estimatedHours}h</span>{" "}
+                <span className="text-slate-500">({item.actualHours}h)</span>
+              </td>
+              <td className="py-2.5 px-3 font-mono text-[11px] text-slate-300">
+                <span className="text-emerald-400 font-semibold">
+                  ${(item.plannedBudget || 0).toLocaleString()}
+                </span>{" "}
+                <span className="text-slate-500 text-[10px]">
+                  (${item.actualCost ? item.actualCost.toLocaleString() : 0})
+                </span>
+              </td>
+            </>
+          )}
+
+          {/* Actions column */}
+          <td className="py-2.5 pr-3 text-right">
+            <div className="flex items-center justify-end gap-1">
+              <button
+                type="button"
+                onClick={() => onOpenEditModal(item)}
+                className="p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                title="More actions"
+              >
+                <MoreHorizontal className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </td>
+        </tr>
+
+        {/* Recursive Rendering of Children */}
+        {hasChildren &&
+          isExpanded &&
+          children.map((child) => renderDeliverableRow(child, depth + 1, currentSectionStatus))}
+      </React.Fragment>
+    );
+  };
+
+  // Group items by status dynamically using statusConfigs (supporting custom statuses and automatic progress)
+  // Default order:
+  // 1. DONE (at the top - 100%)
+  // 2. DEMO READY (60%)
+  // 3. BLOCKED (50%)
+  // 4. IN PROGRESS (40%)
+  // 5. TO DO (0%)
+  // 6. BACKLOG (0% - at bottom)
+  // 7+. Custom Statuses
+  const statusGroups: {
+    key: string;
+    status: WorkItemStatus;
+    label: string;
+    progressPercent: number;
+    items: WbsItem[];
+    dotColor: string;
+    description?: string;
+    badgeBg?: string;
+    badgeText?: string;
+    badgeBorder?: string;
+    isDefault?: boolean;
+  }[] = useMemo(() => {
+    const filteredHierarchy =
+      quickAssignFilter === "unassigned"
+        ? hierarchyItems.filter((i) => !isItemAssigned(i))
+        : hierarchyItems;
+    const filteredBacklog =
+      quickAssignFilter === "unassigned"
+        ? backlogItems.filter((i) => !isItemAssigned(i))
+        : backlogItems;
+
+    const list = statusConfigs && statusConfigs.length > 0 ? statusConfigs : DEFAULT_STATUS_CONFIGS;
+
+    return list.map((conf) => {
+      let items: WbsItem[] = [];
+      if (conf.key === "Backlog") {
+        items = filteredBacklog;
+      } else {
+        items = filteredHierarchy.filter((i) => i.status === conf.key);
+      }
+      return {
+        key: conf.key,
+        status: conf.key as WorkItemStatus,
+        label: conf.label,
+        progressPercent: conf.progressPercent,
+        items,
+        dotColor: conf.dotColor,
+        description: conf.description,
+        badgeBg: conf.badgeBg,
+        badgeText: conf.badgeText,
+        badgeBorder: conf.badgeBorder,
+        isDefault: conf.isDefault,
+      };
+    });
+  }, [hierarchyItems, backlogItems, quickAssignFilter, statusConfigs]);
 
   return (
     <div className="bg-[#090D16] border border-[#1E293B] rounded-xl shadow-xl overflow-hidden font-sans">
@@ -282,67 +926,272 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
       <div className="p-4 sm:p-5 bg-[#090D16]">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
           {/* Card 1: Backlog */}
-          <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-3.5 sm:p-4 flex items-center gap-3.5 shadow-xs">
-            <div className="h-10 w-10 rounded-lg bg-[#064E3B]/50 border border-[#059669]/60 flex items-center justify-center shrink-0 text-emerald-400">
-              <Check className="h-5 w-5 stroke-[2.5]" />
+          <div
+            id="wbs-kpi-card-backlog"
+            onClick={() => {
+              setExpandedSections((prev) => ({ ...prev, Backlog: true }));
+              const el = document.getElementById("wbs-section-Backlog");
+              if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
+            className="bg-[#0B0F19] border border-[#1E293B] hover:border-indigo-500/50 rounded-xl p-3.5 sm:p-4 flex items-center gap-3.5 shadow-xs transition-colors cursor-pointer"
+            title="Click to jump to Backlog items (work items not assigned to hierarchy)"
+          >
+            <div
+              className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${
+                backlogItems.length === 0
+                  ? "bg-[#064E3B]/50 border border-[#059669]/60 text-emerald-400"
+                  : "bg-indigo-950/60 border border-indigo-500/50 text-indigo-400"
+              }`}
+            >
+              {backlogItems.length === 0 ? (
+                <Check className="h-5 w-5 stroke-[2.5]" />
+              ) : (
+                <Layers className="h-5 w-5 stroke-[2.2]" />
+              )}
             </div>
-            <div>
-              <h4 className="text-xs sm:text-sm font-bold text-white tracking-wide">Backlog</h4>
-              <p className="text-[11px] text-slate-400 mt-0.5">{totalTasks} tasks added</p>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs sm:text-sm font-bold text-white tracking-wide">Backlog</h4>
+                {backlogItems.length > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                    {backlogItems.length}
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-slate-400 mt-0.5 truncate">
+                {backlogItems.length === 0 ? (
+                  <>
+                    <span className="text-emerald-400 font-medium">0 unassigned</span>{" "}
+                    <span className="text-slate-500 font-normal">({totalTasks} total tasks)</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="font-semibold text-slate-200 font-mono">{backlogItems.length}</span>{" "}
+                    {backlogItems.length === 1 ? "task" : "tasks"} in backlog{" "}
+                    <span className="text-slate-500 font-normal">({totalTasks} total)</span>
+                  </>
+                )}
+              </p>
             </div>
           </div>
 
           {/* Card 2: Assigned */}
-          <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-3.5 sm:p-4 flex items-center gap-3.5 shadow-xs">
-            <div className="h-10 w-10 rounded-lg bg-[#78350F]/50 border border-[#D97706]/60 flex items-center justify-center shrink-0 text-amber-400">
-              <UserPlus className="h-5 w-5 stroke-[2.5]" />
+          <div
+            id="wbs-kpi-card-assigned"
+            onClick={() => {
+              setQuickAssignFilter((prev) => (prev === "unassigned" ? "all" : "unassigned"));
+            }}
+            className={`bg-[#0B0F19] border rounded-xl p-3.5 sm:p-4 flex items-center gap-3.5 shadow-xs transition-colors cursor-pointer ${
+              quickAssignFilter === "unassigned"
+                ? "border-amber-500/80 bg-amber-950/15 ring-1 ring-amber-500/40"
+                : "border-[#1E293B] hover:border-amber-500/50"
+            }`}
+            title="Click to toggle filter for unassigned tasks"
+          >
+            <div
+              className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${
+                missingAssigneeTasks.length === 0
+                  ? "bg-[#064E3B]/50 border border-[#059669]/60 text-emerald-400"
+                  : "bg-[#78350F]/50 border border-[#D97706]/60 text-amber-400"
+              }`}
+            >
+              {missingAssigneeTasks.length === 0 ? (
+                <Check className="h-5 w-5 stroke-[2.5]" />
+              ) : (
+                <UserPlus className="h-5 w-5 stroke-[2.5]" />
+              )}
             </div>
-            <div>
-              <h4 className="text-xs sm:text-sm font-bold text-white tracking-wide">Assigned</h4>
-              <p className="text-[11px] text-slate-400 mt-0.5">
-                {missingAssigneeTasks.length} tasks missing assignee
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs sm:text-sm font-bold text-white tracking-wide">Assigned</h4>
+                {quickAssignFilter === "unassigned" ? (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-500/25 text-amber-300 border border-amber-500/40 uppercase">
+                    Filter Active
+                  </span>
+                ) : (
+                  missingAssigneeTasks.length > 0 && (
+                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                      {missingAssigneeTasks.length}
+                    </span>
+                  )
+                )}
+              </div>
+              <p className="text-[11px] text-slate-400 mt-0.5 truncate">
+                {missingAssigneeTasks.length === 0 ? (
+                  <span className="text-emerald-400 font-medium">All {totalTasks} tasks assigned</span>
+                ) : (
+                  <>
+                    <span className="font-semibold text-slate-200 font-mono">{missingAssigneeTasks.length}</span>{" "}
+                    tasks missing assignee{" "}
+                    <span className="text-slate-500 font-normal">({assignedTasksCount} assigned)</span>
+                  </>
+                )}
               </p>
             </div>
           </div>
 
           {/* Card 3: Effort */}
-          <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-3.5 sm:p-4 flex items-center gap-3.5 shadow-xs">
+          <div
+            id="wbs-kpi-card-effort"
+            onClick={() => setShowDetailedEvm((prev) => !prev)}
+            className={`bg-[#0B0F19] border rounded-xl p-3.5 sm:p-4 flex items-center gap-3.5 shadow-xs transition-colors cursor-pointer ${
+              showDetailedEvm
+                ? "border-sky-500/80 bg-sky-950/15 ring-1 ring-sky-500/40"
+                : "border-[#1E293B] hover:border-amber-500/50"
+            }`}
+            title="Click to toggle Detailed EVM & Hours columns in the table"
+          >
             <div className="h-10 w-10 rounded-lg bg-[#78350F]/50 border border-[#D97706]/60 flex items-center justify-center shrink-0 text-amber-400">
               <Zap className="h-5 w-5 stroke-[2.5]" />
             </div>
-            <div>
-              <h4 className="text-xs sm:text-sm font-bold text-white tracking-wide">Effort</h4>
-              <p className="text-[11px] text-slate-400 mt-0.5">
-                {missingEffortTasks.length} tasks missing effort
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs sm:text-sm font-bold text-white tracking-wide">Effort</h4>
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                  {totalEffortHours.toLocaleString()}h
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-0.5 truncate">
+                <span className="font-bold text-amber-300 font-mono">{totalEffortHours.toLocaleString()} hrs</span>{" "}
+                total estimated{" "}
+                <span className="text-slate-500 font-normal">
+                  {missingEffortTasks.length > 0
+                    ? `(${missingEffortTasks.length} unestimated)`
+                    : `(${totalActualHours.toLocaleString()}h logged)`}
+                </span>
               </p>
             </div>
           </div>
         </div>
       </div>
 
+      {/* Active Unassigned Filter Banner */}
+      {quickAssignFilter === "unassigned" && (
+        <div className="px-4 sm:px-5 py-2 bg-amber-950/40 border-b border-amber-500/30 flex items-center justify-between text-xs text-amber-200">
+          <div className="flex items-center gap-2">
+            <Filter className="h-3.5 w-3.5 text-amber-400" />
+            <span>
+              Showing tasks missing an assignee (<strong>{missingAssigneeTasks.length}</strong> tasks)
+            </span>
+          </div>
+          <button
+            onClick={() => setQuickAssignFilter("all")}
+            className="text-[11px] font-semibold text-amber-300 hover:text-white underline cursor-pointer"
+          >
+            Clear filter / Show all
+          </button>
+        </div>
+      )}
+
       {/* 4. Tab Views Router */}
       {activeTab === "List" && (
         <div className="px-4 sm:px-5 pb-5">
+          {/* Smart Space-Saving WBS Hierarchy Ribbon & Nomenclature Controls */}
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-[#0B0F19] border border-[#1E293B] text-xs">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider font-mono">
+                Hierarchy:
+              </span>
+              {[
+                { type: "Milestone" as WbsType, symbol: "◆", acronym: "M", label: "Milestone", count: wbsItems.filter((i) => i.type === "Milestone").length, dot: "bg-amber-400", color: "text-amber-300", border: "border-amber-500/30" },
+                { type: "Epic" as WbsType, symbol: "⚡", acronym: "E", label: "Epic", count: wbsItems.filter((i) => i.type === "Epic").length, dot: "bg-purple-400", color: "text-purple-300", border: "border-purple-500/30" },
+                { type: "Feature" as WbsType, symbol: "✦", acronym: "F", label: "Feature", count: wbsItems.filter((i) => i.type === "Feature").length, dot: "bg-blue-400", color: "text-blue-300", border: "border-blue-500/30" },
+                { type: "User Story" as WbsType, symbol: "📖", acronym: "S", label: "Story", count: wbsItems.filter((i) => i.type === "User Story").length, dot: "bg-emerald-400", color: "text-emerald-300", border: "border-emerald-500/30" },
+                { type: "Task" as WbsType, symbol: "☑", acronym: "T", label: "Task", count: wbsItems.filter((i) => i.type === "Task").length, dot: "bg-cyan-400", color: "text-cyan-300", border: "border-cyan-500/30" },
+                { type: "Subtask" as WbsType, symbol: "↳", acronym: "sub", label: "Subtask", count: wbsItems.filter((i) => i.type === "Subtask").length, dot: "bg-slate-400", color: "text-slate-300", border: "border-slate-600/30" },
+              ].map((lvl, index, arr) => (
+                <React.Fragment key={lvl.type}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedLevelFilter(selectedLevelFilter === lvl.type ? "ALL" : lvl.type)}
+                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-md transition-all cursor-pointer text-[11px] font-medium border ${
+                      selectedLevelFilter === lvl.type
+                        ? "bg-slate-800 border-sky-400 text-white shadow-xs ring-1 ring-sky-400/50"
+                        : "hover:bg-slate-900 border-[#1E293B] text-slate-300 hover:text-white"
+                    }`}
+                    title={`Filter view by ${lvl.label}s (Click to toggle)`}
+                  >
+                    <span className="text-xs leading-none">{lvl.symbol}</span>
+                    <span className={lvl.color}>{lvl.label}</span>
+                    <span className="font-mono text-[10px] text-slate-500">({lvl.count})</span>
+                  </button>
+                  {index < arr.length - 1 && <span className="text-slate-600 text-[10px]">›</span>}
+                </React.Fragment>
+              ))}
+              {selectedLevelFilter !== "ALL" && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedLevelFilter("ALL")}
+                  className="text-[10px] text-sky-400 hover:underline ml-1 cursor-pointer font-medium"
+                >
+                  Reset filter
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] text-slate-400 font-mono">Nomenclature:</span>
+              <div className="inline-flex rounded-lg bg-slate-900 p-0.5 border border-slate-800 text-[11px] font-medium">
+                <button
+                  type="button"
+                  onClick={() => setNomenclatureStyle("smart")}
+                  className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                    nomenclatureStyle === "smart"
+                      ? "bg-sky-600 text-white font-semibold shadow-xs"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                  title="Clear Names: ◆ Milestone, ⚡ Epic, ✦ Feature, 📖 Story, ☑ Task, ↳ Subtask"
+                >
+                  Smart Names
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNomenclatureStyle("micro")}
+                  className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                    nomenclatureStyle === "micro"
+                      ? "bg-sky-600 text-white font-semibold shadow-xs"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                  title="Ultra-compact Micro Codes: ◆ M, ⚡ E, ✦ F, 📖 S, ☑ T, ↳ sub"
+                >
+                  Micro (M/E/F/S/T)
+                </button>
+              </div>
+
+              {/* Status & Progress Rules Config Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  setFocusedStatusForConfig(undefined);
+                  setIsStatusManagerOpen(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/40 text-indigo-300 hover:text-white text-[11px] font-semibold transition-all cursor-pointer shadow-xs ml-1"
+                title="Configure custom workflow statuses and automatic progress percentages"
+              >
+                <Sliders className="h-3.5 w-3.5" />
+                <span>Status & Progress Rules</span>
+                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-indigo-500/30 text-white">
+                  {statusConfigs.length}
+                </span>
+              </button>
+            </div>
+          </div>
+
           {/* Status Group Sections */}
           {statusGroups.map((group) => {
-            const isGroupOpen = expandedSections[group.status] ?? true;
+            const isGroupOpen = expandedSections[group.key] ?? true;
 
-            // Separate into top-level / parent items within this group, or all items in this status
-            // To match screenshot: show parent deliverable with its child deliverables indented beneath it
-            const parentItemsInGroup = group.items.filter(
-              (i) => !getParentId(i, wbsItems) || childrenMap.has(i.id)
-            );
-            // If empty, don't show empty group unless Demoable or In Progress
-            if (group.items.length === 0 && group.status !== "Demoable" && group.status !== "In Progress") {
-              return null;
-            }
+            // Filter items by level if selectedLevelFilter is active
+            const visibleItems = selectedLevelFilter === "ALL"
+              ? group.items
+              : group.items.filter((i) => i.type === selectedLevelFilter);
 
             return (
-              <div key={group.status} className="mb-6 last:mb-0">
-                {/* 4A. Group Header Pill */}
-                <div className="flex items-center gap-2 mb-2">
+              <div key={group.key} id={`wbs-section-${group.key}`} className="mb-6 last:mb-0">
+                {/* 4A. Group Header Pill with Automatic Progress Indicator */}
+                <div className="flex items-center gap-2 mb-2 flex-wrap">
                   <button
-                    onClick={() => toggleSection(group.status)}
+                    onClick={() => toggleSection(group.key)}
                     className="text-slate-400 hover:text-white p-0.5 transition-colors cursor-pointer"
                   >
                     {isGroupOpen ? (
@@ -355,16 +1204,29 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
                   <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#0F172A] border border-[#1E293B] text-slate-200 text-[11px] font-bold tracking-wider">
                     {renderStatusIcon(group.status)}
                     <span>{group.label}</span>
+                    <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30 ml-0.5">
+                      {group.progressPercent}%
+                    </span>
                   </div>
 
                   <span className="text-xs text-slate-400 font-mono font-medium ml-1">
                     {group.items.length}
                   </span>
 
+                  {group.description && (
+                    <span className="hidden md:inline-block text-[11px] text-slate-500 ml-1.5 font-normal italic">
+                      — {group.description}
+                    </span>
+                  )}
+
                   <div className="flex items-center gap-1 ml-1 text-slate-500 hover:text-slate-300">
                     <button
-                      className="p-1 rounded hover:bg-slate-800 transition-colors cursor-pointer"
-                      title="Group options"
+                      onClick={() => {
+                        setFocusedStatusForConfig(group.key);
+                        setIsStatusManagerOpen(true);
+                      }}
+                      className="p-1 rounded hover:bg-slate-800 transition-colors cursor-pointer text-slate-400 hover:text-sky-300"
+                      title={`Configure ${group.label} progress rule (${group.progressPercent}%) & options`}
                     >
                       <MoreHorizontal className="h-3.5 w-3.5" />
                     </button>
@@ -414,286 +1276,25 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
                               colSpan={showDetailedEvm ? 7 : 5}
                               className="py-6 text-center text-slate-500 text-xs italic"
                             >
-                              No tasks currently in {group.label}
+                              {group.key === "Backlog"
+                                ? "No unassigned backlog items. All work items are allocated to milestones or higher hierarchy."
+                                : `No tasks currently in ${group.label}`}
                             </td>
                           </tr>
                         ) : (
-                          // Render items: if an item has children, render parent followed by children
-                          group.items.map((item) => {
-                            const isChildOfSomeone = !!getParentId(item, wbsItems);
-                            const children = childrenMap.get(item.id) || [];
-                            const hasChildren = children.length > 0;
-                            const isExpanded = expandedParents[item.id] ?? true;
-                            const stakeholder = getStakeholder(item.assignedStakeholderId);
+                          (() => {
+                            // Find all items that should appear at the top-level of this status group
+                            const topLevelItems = visibleItems.filter((item) => {
+                              const pId = getParentId(item, wbsItems);
+                              if (!pId) return true;
+                              // If parent is not in this group's items, treat this item as top-level in this section
+                              return !visibleItems.some((i) => i.id === pId);
+                            });
 
-                            // If this is a child item and its parent is also in the list, skip direct rendering here
-                            // because it will be rendered indented right beneath its parent!
-                            if (isChildOfSomeone && group.items.some((i) => i.id === getParentId(item, wbsItems))) {
-                              return null;
-                            }
-
-                            return (
-                              <React.Fragment key={item.id}>
-                                {/* Parent / Primary Deliverable Row */}
-                                <tr className="group hover:bg-[#0E1526]/80 transition-colors">
-                                  {/* Name column */}
-                                  <td className="py-2.5 pl-1 pr-3">
-                                    <div className="flex items-center gap-2">
-                                      {/* Grip dots on hover */}
-                                      <div className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-600 cursor-grab -ml-1">
-                                        <GripVertical className="h-3.5 w-3.5" />
-                                      </div>
-
-                                      {/* Expand/Collapse Chevron */}
-                                      {hasChildren ? (
-                                        <button
-                                          type="button"
-                                          onClick={() => toggleParent(item.id)}
-                                          className="text-slate-400 hover:text-white p-0.5 transition-colors cursor-pointer"
-                                        >
-                                          {isExpanded ? (
-                                            <ChevronDown className="h-3.5 w-3.5" />
-                                          ) : (
-                                            <ChevronRight className="h-3.5 w-3.5" />
-                                          )}
-                                        </button>
-                                      ) : (
-                                        <span className="w-4 inline-block" />
-                                      )}
-
-                                      {/* Status Icon */}
-                                      <div className="shrink-0">{renderStatusIcon(item.status)}</div>
-
-                                      {/* Title */}
-                                      <span className="font-semibold text-white text-xs hover:text-sky-300 transition-colors cursor-pointer truncate max-w-md"
-                                        onClick={() => onOpenEditModal(item)}
-                                      >
-                                        {item.title}
-                                      </span>
-
-                                      {/* Subtask count badge */}
-                                      {hasChildren && (
-                                        <span className="inline-flex items-center gap-1 text-[11px] text-slate-400 font-mono ml-1">
-                                          <CornerDownRight className="h-3 w-3 text-slate-500" />
-                                          <span>{children.length}</span>
-                                        </span>
-                                      )}
-
-                                      {/* Quick hover action buttons */}
-                                      <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 ml-2">
-                                        <button
-                                          type="button"
-                                          onClick={() => onOpenAddModal(item.id, item.status)}
-                                          className="p-1 rounded bg-[#141C2E] hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700 transition-colors cursor-pointer"
-                                          title={`Add subtask to ${item.title}`}
-                                        >
-                                          <Plus className="h-3 w-3" />
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => onOpenEditModal(item)}
-                                          className="p-1 rounded bg-[#141C2E] hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700 transition-colors cursor-pointer"
-                                          title="Edit work item"
-                                        >
-                                          <Pencil className="h-3 w-3" />
-                                        </button>
-                                      </div>
-                                    </div>
-                                  </td>
-
-                                  {/* Assignee column */}
-                                  <td className="py-2.5 px-3">
-                                    {stakeholder ? (
-                                      <div
-                                        onClick={() => onOpenEditModal(item)}
-                                        className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-[#0B0F19] border border-[#1E293B] hover:border-slate-600 text-slate-300 text-[11px] cursor-pointer transition-colors max-w-36 truncate"
-                                        title={`${stakeholder.name} (${stakeholder.role})`}
-                                      >
-                                        <div className="h-4 w-4 rounded-full bg-sky-500/20 text-sky-400 flex items-center justify-center text-[9px] font-bold shrink-0">
-                                          {stakeholder.name.charAt(0)}
-                                        </div>
-                                        <span className="truncate">{stakeholder.name}</span>
-                                      </div>
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        onClick={() => onOpenEditModal(item)}
-                                        className="inline-flex items-center gap-1 px-2 py-1 rounded bg-[#0B0F19] border border-[#1E293B] hover:border-slate-600 text-slate-500 hover:text-slate-300 text-[11px] cursor-pointer transition-colors"
-                                        title="Assign team member"
-                                      >
-                                        <UserPlus className="h-3.5 w-3.5" />
-                                      </button>
-                                    )}
-                                  </td>
-
-                                  {/* Due Date column (Salmon/Red color matching screenshot) */}
-                                  <td className="py-2.5 px-3 font-mono text-[11px] text-[#F87171]">
-                                    {formatShortDate(item.dueDate)}
-                                  </td>
-
-                                  {/* Priority column */}
-                                  <td className="py-2.5 px-3">{renderPriorityFlag(item)}</td>
-
-                                  {/* Detailed EVM columns */}
-                                  {showDetailedEvm && (
-                                    <>
-                                      <td className="py-2.5 px-3 font-mono text-[11px] text-slate-300">
-                                        <span className="text-sky-400 font-semibold">{item.estimatedHours}h</span>{" "}
-                                        <span className="text-slate-500">({item.actualHours}h)</span>
-                                      </td>
-                                      <td className="py-2.5 px-3 font-mono text-[11px] text-slate-300">
-                                        <span className="text-emerald-400 font-semibold">
-                                          ${(item.plannedBudget || 0).toLocaleString()}
-                                        </span>
-                                      </td>
-                                    </>
-                                  )}
-
-                                  {/* Actions column */}
-                                  <td className="py-2.5 pr-3 text-right">
-                                    <div className="flex items-center justify-end gap-1">
-                                      <button
-                                        type="button"
-                                        onClick={() => onOpenEditModal(item)}
-                                        className="p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
-                                        title="More actions"
-                                      >
-                                        <MoreHorizontal className="h-3.5 w-3.5" />
-                                      </button>
-                                    </div>
-                                  </td>
-                                </tr>
-
-                                {/* Child / Subtasks Indented Beneath Parent */}
-                                {hasChildren &&
-                                  isExpanded &&
-                                  children.map((child) => {
-                                    const childStakeholder = getStakeholder(child.assignedStakeholderId);
-
-                                    return (
-                                      <tr
-                                        key={child.id}
-                                        className="group hover:bg-[#0E1526]/60 transition-colors border-t border-[#1E293B]/20"
-                                      >
-                                        {/* Name column with Indent */}
-                                        <td className="py-2 pl-9 pr-3">
-                                          <div className="flex items-center gap-2.5">
-                                            {/* Dashed Circle status indicator */}
-                                            <button
-                                              type="button"
-                                              onClick={() => {
-                                                const nextStatus: WorkItemStatus =
-                                                  child.status === "Done" ? "In Progress" : "Done";
-                                                onUpdateWbsItem({
-                                                  ...child,
-                                                  status: nextStatus,
-                                                  progressPercent: nextStatus === "Done" ? 100 : 50,
-                                                });
-                                              }}
-                                              className="text-slate-500 hover:text-emerald-400 transition-colors cursor-pointer shrink-0"
-                                              title={`Toggle status (currently ${child.status})`}
-                                            >
-                                              {child.status === "Done" ? (
-                                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-                                              ) : (
-                                                <CircleDashed className="h-3.5 w-3.5" />
-                                              )}
-                                            </button>
-
-                                            {/* Subtask Title */}
-                                            <span
-                                              onClick={() => onOpenEditModal(child)}
-                                              className="text-xs text-slate-200 hover:text-white cursor-pointer transition-colors truncate max-w-lg"
-                                            >
-                                              {child.title}
-                                            </span>
-
-                                            {/* Hover Actions */}
-                                            <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 ml-2">
-                                              <button
-                                                type="button"
-                                                onClick={() => onOpenEditModal(child)}
-                                                className="p-0.5 rounded text-slate-500 hover:text-white transition-colors cursor-pointer"
-                                                title="Edit subtask"
-                                              >
-                                                <Pencil className="h-3 w-3" />
-                                              </button>
-                                              <button
-                                                type="button"
-                                                onClick={() => {
-                                                  if (confirm(`Delete subtask "${child.title}"?`)) {
-                                                    onDeleteWbsItem(child.id);
-                                                  }
-                                                }}
-                                                className="p-0.5 rounded text-slate-500 hover:text-rose-400 transition-colors cursor-pointer"
-                                                title="Delete subtask"
-                                              >
-                                                <Trash2 className="h-3 w-3" />
-                                              </button>
-                                            </div>
-                                          </div>
-                                        </td>
-
-                                        {/* Assignee column */}
-                                        <td className="py-2 px-3">
-                                          {childStakeholder ? (
-                                            <div
-                                              onClick={() => onOpenEditModal(child)}
-                                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#0B0F19] border border-[#1E293B] text-slate-300 text-[11px] cursor-pointer hover:border-slate-600 transition-colors max-w-36 truncate"
-                                            >
-                                              <div className="h-3.5 w-3.5 rounded-full bg-indigo-500/20 text-indigo-300 flex items-center justify-center text-[8px] font-bold shrink-0">
-                                                {childStakeholder.name.charAt(0)}
-                                              </div>
-                                              <span className="truncate">{childStakeholder.name}</span>
-                                            </div>
-                                          ) : (
-                                            <button
-                                              type="button"
-                                              onClick={() => onOpenEditModal(child)}
-                                              className="p-1 rounded text-slate-600 hover:text-slate-300 transition-colors cursor-pointer"
-                                              title="Assign team member"
-                                            >
-                                              <UserPlus className="h-3.5 w-3.5" />
-                                            </button>
-                                          )}
-                                        </td>
-
-                                        {/* Due date column (Salmon/red) */}
-                                        <td className="py-2 px-3 font-mono text-[11px] text-[#F87171]">
-                                          {formatShortDate(child.dueDate)}
-                                        </td>
-
-                                        {/* Priority column */}
-                                        <td className="py-2 px-3">{renderPriorityFlag(child)}</td>
-
-                                        {/* Detailed EVM columns */}
-                                        {showDetailedEvm && (
-                                          <>
-                                            <td className="py-2 px-3 font-mono text-[11px] text-slate-400">
-                                              {child.estimatedHours}h
-                                            </td>
-                                            <td className="py-2 px-3 font-mono text-[11px] text-slate-400">
-                                              ${(child.plannedBudget || 0).toLocaleString()}
-                                            </td>
-                                          </>
-                                        )}
-
-                                        {/* Actions */}
-                                        <td className="py-2 pr-3 text-right">
-                                          <button
-                                            type="button"
-                                            onClick={() => onOpenEditModal(child)}
-                                            className="p-1 rounded text-slate-600 hover:text-slate-300 transition-colors cursor-pointer"
-                                          >
-                                            <MoreHorizontal className="h-3.5 w-3.5" />
-                                          </button>
-                                        </td>
-                                      </tr>
-                                    );
-                                  })}
-                              </React.Fragment>
+                            return topLevelItems.map((item) =>
+                              renderDeliverableRow(item, 0, group.status)
                             );
-                          })
+                          })()
                         )}
                       </tbody>
                     </table>
@@ -706,7 +1307,7 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
                         className="inline-flex items-center gap-2 py-1.5 px-2 text-slate-400 hover:text-white text-xs font-medium transition-colors cursor-pointer rounded-md hover:bg-[#141C2E]"
                       >
                         <Plus className="h-3.5 w-3.5" />
-                        <span>Add Task</span>
+                        <span>{group.key === "Backlog" ? "Add to Backlog" : "Add Task"}</span>
                       </button>
                     </div>
                   </div>
@@ -720,17 +1321,20 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
       {/* 5. Board / Kanban View */}
       {activeTab === "Board" && (
         <div className="p-4 sm:p-5 overflow-x-auto">
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-3 min-w-[850px]">
+          <div className="flex items-start gap-3 min-w-max pb-2">
             {statusGroups.map((col) => (
               <div
-                key={col.status}
-                className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-3 flex flex-col h-[520px]"
+                key={col.key}
+                className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-3 flex flex-col h-[520px] w-72 shrink-0"
               >
                 <div className="flex items-center justify-between pb-2.5 mb-2 border-b border-[#1E293B]">
                   <div className="flex items-center gap-1.5">
                     {renderStatusIcon(col.status)}
                     <span className="text-xs font-bold text-white uppercase tracking-wider">
                       {col.label}
+                    </span>
+                    <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                      {col.progressPercent}%
                     </span>
                   </div>
                   <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-[#141C2E] text-slate-300 border border-slate-700">
@@ -740,7 +1344,8 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
 
                 <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
                   {col.items.map((item) => {
-                    const stk = getStakeholder(item.assignedStakeholderId);
+                    const nom = getCompactNomenclature(item.type);
+                    const itemAssignees = getItemAssignees(item, stakeholders);
                     return (
                       <div
                         key={item.id}
@@ -748,17 +1353,34 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
                         className="p-3 rounded-lg bg-[#060911] border border-[#1E293B] hover:border-sky-500/50 transition-all cursor-pointer shadow-xs space-y-2"
                       >
                         <div className="flex items-start justify-between gap-2">
-                          <span className="font-mono text-[10px] text-sky-400">{item.wbsCode}</span>
+                          <div className="flex items-center gap-1.5">
+                            <span className={`inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-mono font-bold border ${nom.bgColor} ${nom.color} ${nom.borderColor}`}>
+                              <span className="text-[10px] leading-none">{nom.symbol}</span>
+                              <span>{nom.short}</span>
+                            </span>
+                            <span className="font-mono text-[10px] text-sky-400">{item.wbsCode}</span>
+                          </div>
                           {renderPriorityFlag(item)}
                         </div>
                         <h5 className="text-xs font-semibold text-white line-clamp-2">{item.title}</h5>
 
                         <div className="flex items-center justify-between pt-1 text-[11px] text-slate-400 border-t border-[#1E293B]/40">
                           <span className="text-[#F87171] font-mono">{formatShortDate(item.dueDate)}</span>
-                          {stk ? (
-                            <span className="truncate max-w-[90px] text-slate-300">{stk.name}</span>
+                          {itemAssignees.length > 0 ? (
+                            <div className="flex items-center gap-1">
+                              <div className="flex -space-x-1">
+                                {itemAssignees.slice(0, 2).map((s) => (
+                                  <span key={s.id} className="h-3.5 w-3.5 rounded-full bg-sky-500/30 text-[8px] flex items-center justify-center text-sky-300 font-bold">
+                                    {s.name.charAt(0)}
+                                  </span>
+                                ))}
+                              </div>
+                              <span className="truncate max-w-[80px] text-slate-300 text-[10px]">
+                                {itemAssignees.length === 1 ? itemAssignees[0].name : `${itemAssignees.length} assigned`}
+                              </span>
+                            </div>
                           ) : (
-                            <span className="text-slate-600 italic">Unassigned</span>
+                            <span className="text-slate-600 italic text-[10px]">Unassigned</span>
                           )}
                         </div>
                       </div>
@@ -775,6 +1397,27 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
                 </button>
               </div>
             ))}
+
+            {/* Add Status Column Action Tile */}
+            <div
+              onClick={() => {
+                setFocusedStatusForConfig(undefined);
+                setIsStatusManagerOpen(true);
+              }}
+              className="bg-[#0B0F19]/40 border-2 border-dashed border-[#1E293B] hover:border-purple-500/60 rounded-xl p-4 flex flex-col items-center justify-center gap-3 h-[520px] transition-all cursor-pointer group text-slate-500 hover:text-purple-300 w-72 shrink-0"
+            >
+              <div className="h-10 w-10 rounded-xl bg-purple-500/10 group-hover:bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-400 transition-colors">
+                <Plus className="h-5 w-5" />
+              </div>
+              <div className="text-center">
+                <p className="text-xs font-bold text-slate-300 group-hover:text-white">
+                  Add Status Column
+                </p>
+                <p className="text-[10px] text-slate-500 mt-0.5">
+                  Custom status & auto progress %
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -912,7 +1555,7 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
               <div className="p-3 rounded-lg bg-[#060911] border border-[#1E293B]">
                 <div className="text-[10px] uppercase font-mono text-slate-400 font-bold">Rolled-Up Hours</div>
                 <div className="text-lg font-bold text-sky-400 mt-1 font-mono">
-                  {wbsItems.reduce((acc, i) => acc + (Number(i.estimatedHours) || 0), 0)}h
+                  {totalEffortHours.toLocaleString()}h
                 </div>
                 <div className="text-[10px] text-slate-400 mt-0.5">100% rule leaf sum</div>
               </div>
@@ -926,6 +1569,25 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
           </div>
         </div>
       )}
+
+      {/* Custom Status & Progress Manager Modal */}
+      <StatusManagerModal
+        isOpen={isStatusManagerOpen}
+        onClose={() => {
+          setIsStatusManagerOpen(false);
+          setFocusedStatusForConfig(undefined);
+        }}
+        statusConfigs={statusConfigs}
+        onUpdateConfigs={(newConfigs) => {
+          if (onUpdateStatusConfigs) {
+            onUpdateStatusConfigs(newConfigs);
+          }
+        }}
+        onApplyStatusProgressToTasks={onApplyStatusProgressToTasks}
+        onSyncAllTasks={onSyncAllTasks}
+        wbsItems={wbsItems}
+        initialSelectedStatusKey={focusedStatusForConfig}
+      />
     </div>
   );
 };
