@@ -10,7 +10,8 @@ import {
   AlertCircle,
   TrendingUp,
 } from "lucide-react";
-import { ActiveTab, EvmMetrics, ProjectSettings } from "../types";
+import { ActiveTab, EvmMetrics, ProjectSettings, Project, Sprint } from "../types";
+import { ProjectSwitcher } from "./ProjectSwitcher";
 
 interface NavbarProps {
   activeTab: ActiveTab;
@@ -21,6 +22,14 @@ interface NavbarProps {
   projectContextData: any;
   onOpenMobileSidebar?: () => void;
   onUploadDocsClick?: () => void;
+  projects?: Project[];
+  sprints?: Sprint[];
+  activeProjectId?: string;
+  onSelectProject?: (id: string) => void;
+  onOpenCreateProject?: () => void;
+  onOpenCreateSprint?: (projectId?: string) => void;
+  onOpenEditProject?: (project: Project) => void;
+  onPromptDeleteProject?: (project: Project) => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -32,6 +41,14 @@ export const Navbar: React.FC<NavbarProps> = ({
   projectContextData,
   onOpenMobileSidebar,
   onUploadDocsClick,
+  projects = [],
+  sprints = [],
+  activeProjectId = "all",
+  onSelectProject,
+  onOpenCreateProject,
+  onOpenCreateSprint,
+  onOpenEditProject,
+  onPromptDeleteProject,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [isAiLoading, setIsAiLoading] = useState(false);
@@ -100,33 +117,49 @@ export const Navbar: React.FC<NavbarProps> = ({
           <Menu className="h-5 w-5" />
         </button>
 
+        {/* Project Switcher Dropdown (ClickUp Style) */}
+        {projects.length > 0 && onSelectProject && (
+          <div className="shrink-0">
+            <ProjectSwitcher
+              projects={projects}
+              sprints={sprints}
+              activeProjectId={activeProjectId}
+              onSelectProject={onSelectProject}
+              onOpenCreateProject={onOpenCreateProject}
+              onOpenCreateSprint={onOpenCreateSprint}
+              onOpenEditProject={onOpenEditProject}
+              onPromptDeleteProject={onPromptDeleteProject}
+            />
+          </div>
+        )}
+
         {/* AI Query Input */}
-        <div className="relative flex-1 max-w-xl">
+        <div className="relative flex-1 max-w-xl min-w-0">
           <form onSubmit={(e) => handleAiSearch(e)} className="relative flex items-center">
-            <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-slate-400">
-              <Search className="w-4 h-4 text-slate-400" />
+            <div className="absolute inset-y-0 left-2.5 sm:left-3 flex items-center pointer-events-none text-slate-400">
+              <Search className="w-3.5 sm:w-4 h-3.5 sm:h-4 text-slate-400" />
             </div>
             <input
               id="ai-nlp-search-input"
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder='Ask AI: "What is our current SPI considering the Milestone 3 delay?"'
-              className="w-full bg-[#030712] border border-[#1E293B] rounded-lg py-1.5 pl-10 pr-24 text-xs focus:ring-1 focus:ring-[#38BDF8] focus:border-[#38BDF8] outline-none text-white placeholder-slate-400 transition-all shadow-inner"
+              placeholder='Ask AI: "What is our current SPI?"'
+              className="w-full bg-[#030712] border border-[#1E293B] rounded-lg py-1.5 pl-8 sm:pl-10 pr-18 sm:pr-24 text-xs focus:ring-1 focus:ring-[#38BDF8] focus:border-[#38BDF8] outline-none text-white placeholder-slate-400 transition-all shadow-inner truncate"
             />
             <div className="absolute inset-y-0 right-1 flex items-center">
               <button
                 id="submit-ai-query-btn"
                 type="submit"
                 disabled={isAiLoading || !searchQuery.trim()}
-                className="bg-[#38BDF8] hover:bg-[#0EA5E9] disabled:opacity-50 text-[#030712] px-2.5 py-1 rounded text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer shadow-xs"
+                className="bg-[#38BDF8] hover:bg-[#0EA5E9] disabled:opacity-50 text-[#030712] px-2 sm:px-2.5 py-1 rounded text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer shadow-xs whitespace-nowrap"
               >
                 {isAiLoading ? (
                   <Loader2 className="w-3 h-3 animate-spin" />
                 ) : (
                   <Sparkles className="w-3 h-3" />
                 )}
-                <span>Ask AI</span>
+                <span className="hidden sm:inline">Ask AI</span>
               </button>
             </div>
           </form>

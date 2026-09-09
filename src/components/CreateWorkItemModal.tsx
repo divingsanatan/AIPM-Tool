@@ -7,6 +7,7 @@ import {
   PriorityLevel,
   StatusConfig,
   Sprint,
+  Project,
 } from "../types";
 import {
   X,
@@ -24,6 +25,7 @@ import {
   Search,
   Folder,
   Plus,
+  Play,
   PlayCircle,
   Clock,
   DollarSign,
@@ -34,6 +36,7 @@ import {
   FileCode,
   Wand2,
   Trash2,
+  FolderPlus,
 } from "lucide-react";
 import {
   generateNextWbsChildCode,
@@ -42,6 +45,9 @@ import {
 } from "../utils/wbsRollup";
 import { getStatusConfig, getProgressForStatus } from "../utils/statusConfig";
 import { DEFAULT_SPRINTS } from "../data/sprintsData";
+import { DEFAULT_PROJECTS } from "../data/projectsData";
+import { CreateProjectModal } from "./CreateProjectModal";
+import { CreateSprintModal } from "./CreateSprintModal";
 
 interface CreateWorkItemModalProps {
   isOpen: boolean;
@@ -51,7 +57,13 @@ interface CreateWorkItemModalProps {
   stakeholders: Stakeholder[];
   statusConfigs: StatusConfig[];
   sprints?: Sprint[];
+  projects?: Project[];
   initialParentItem?: WbsItem | null;
+  onOpenCreateProject?: () => void;
+  onOpenCreateSprint?: (projectId?: string) => void;
+  onAddNewProject?: (project: Project) => void;
+  onAddNewSprint?: (sprint: Sprint) => void;
+  activeProjectId?: string;
 }
 
 export const CreateWorkItemModal: React.FC<CreateWorkItemModalProps> = ({
@@ -62,7 +74,13 @@ export const CreateWorkItemModal: React.FC<CreateWorkItemModalProps> = ({
   stakeholders,
   statusConfigs,
   sprints = DEFAULT_SPRINTS,
+  projects = DEFAULT_PROJECTS,
   initialParentItem = null,
+  onOpenCreateProject,
+  onOpenCreateSprint,
+  onAddNewProject,
+  onAddNewSprint,
+  activeProjectId,
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<"task" | "reminder">("task");
@@ -85,11 +103,16 @@ export const CreateWorkItemModal: React.FC<CreateWorkItemModalProps> = ({
     return new Date().toISOString().split("T")[0];
   });
 
-  // Sprint & Hierarchy Allocation State
-  const [selectedSprintId, setSelectedSprintId] = useState<string>("sprint-7");
+  // Sprint & Hierarchy Allocation State - Default to Sprint 6 to match ClickUp workflow
+  const [selectedSprintId, setSelectedSprintId] = useState<string>("sprint-6");
   const [selectedParentId, setSelectedParentId] = useState<string | null>(
     initialParentItem ? initialParentItem.id : null
   );
+
+  // In-modal Sub-modals for Project and Sprint creation
+  const [isInternalProjectModalOpen, setIsInternalProjectModalOpen] = useState(false);
+  const [isInternalSprintModalOpen, setIsInternalSprintModalOpen] = useState(false);
+  const [internalSprintProjectId, setInternalSprintProjectId] = useState<string | undefined>(undefined);
 
   // Custom fields
   const [showCustomFields, setShowCustomFields] = useState(false);
@@ -215,6 +238,9 @@ export const CreateWorkItemModal: React.FC<CreateWorkItemModalProps> = ({
     if (!title.trim()) return;
 
     const selectedSprint = sprints.find((s) => s.id === selectedSprintId);
+    const selectedProj = projects.find(
+      (p) => p.id === selectedSprint?.projectId || p.name === selectedSprint?.projectGroup
+    );
 
     const newItem: WbsItem = {
       id: `wbs-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
@@ -235,6 +261,8 @@ export const CreateWorkItemModal: React.FC<CreateWorkItemModalProps> = ({
       dueDate,
       isCriticalPath,
       description: description.trim(),
+      projectId: selectedProj?.id || selectedSprint?.projectId,
+      projectName: selectedProj?.name || selectedSprint?.projectGroup,
       sprintId: selectedSprint?.id,
       sprintName: selectedSprint?.name,
       checklist: checklist.length > 0 ? checklist : undefined,
@@ -349,35 +377,35 @@ export const CreateWorkItemModal: React.FC<CreateWorkItemModalProps> = ({
                 setIsLocationOpen(!isLocationOpen);
                 setIsTypeOpen(false);
               }}
-              className="bg-[#181B26] hover:bg-[#202534] text-slate-200 px-3 py-1.5 rounded-lg border border-[#2B3145] flex items-center gap-2 text-xs font-medium cursor-pointer transition-colors max-w-sm"
+              className="bg-[#121623] hover:bg-[#181E2F] text-slate-200 px-3 py-1.5 rounded-lg border border-[#242C3F] flex items-center gap-2 text-xs font-medium cursor-pointer transition-colors max-w-sm"
             >
-              <span className="flex items-center gap-1.5 text-indigo-400 shrink-0">
-                <PlayCircle className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="w-4 h-4 rounded-full border border-indigo-400 text-indigo-400 flex items-center justify-center shrink-0">
+                <Play className="w-2 h-2 fill-current ml-0.5" />
               </span>
               <span className="truncate">
-                {selectedSprint ? selectedSprint.name : "Unallocated"}
+                {selectedSprint ? selectedSprint.name : "Select Sprint"}
                 {selectedParent && (
                   <span className="text-slate-400 ml-1 font-mono text-[11px]">
                     · {selectedParent.wbsCode} {selectedParent.title}
                   </span>
                 )}
               </span>
-              <ChevronDown className="w-3 h-3 text-slate-400 ml-0.5 shrink-0" />
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400 ml-0.5 shrink-0" />
             </button>
 
-            {/* Rich Allocation Dropdown (Matching Screenshot 2) */}
+            {/* Rich Allocation Dropdown (Matching Screenshot Exactly) */}
             {isLocationOpen && (
-              <div className="absolute left-0 top-full mt-1.5 w-80 sm:w-96 bg-[#12151F] border border-[#2A3146] rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+              <div className="absolute left-0 top-full mt-1.5 w-84 sm:w-96 bg-[#0D111A] border border-[#212739] rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
                 {/* Search Header */}
-                <div className="p-2.5 border-b border-[#1E2333] bg-[#0D0F17]">
-                  <div className="relative flex items-center">
-                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5" />
+                <div className="p-2.5 border-b border-[#1E2333] bg-[#0A0D15]">
+                  <div className="relative flex items-center bg-[#151927] border border-[#273046] rounded-lg px-2.5 py-1.5">
+                    <Search className="w-3.5 h-3.5 text-slate-400 mr-2 shrink-0" />
                     <input
                       type="text"
                       value={locationSearch}
                       onChange={(e) => setLocationSearch(e.target.value)}
                       placeholder="Search sprints, epics, features..."
-                      className="w-full bg-[#181C28] border border-[#2B3247] rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                      className="w-full bg-transparent text-xs text-white placeholder-slate-500 focus:outline-none"
                     />
                   </div>
                 </div>
@@ -385,12 +413,14 @@ export const CreateWorkItemModal: React.FC<CreateWorkItemModalProps> = ({
                 <div className="max-h-80 overflow-y-auto p-2 text-xs space-y-3">
                   {/* Recents Section */}
                   <div>
-                    <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400 px-2 py-1 font-semibold">
-                      Recents
+                    <div className="text-[11px] font-bold text-[#64748B] tracking-wider uppercase px-2.5 py-1">
+                      RECENTS
                     </div>
-                    <div className="space-y-0.5">
-                      {sprints.slice(0, 3).map((sprint) => {
+                    <div className="space-y-0.5 mt-0.5">
+                      {sprints.slice(0, 3).map((sprint, idx) => {
                         const isSelected = selectedSprintId === sprint.id;
+                        // Use green for first and third, purple for second to match screenshot pattern
+                        const isGreen = !isSelected && idx % 2 === 0;
                         return (
                           <div
                             key={`recent-${sprint.id}`}
@@ -398,27 +428,33 @@ export const CreateWorkItemModal: React.FC<CreateWorkItemModalProps> = ({
                               setSelectedSprintId(sprint.id);
                               setIsLocationOpen(false);
                             }}
-                            className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors ${
+                            className={`flex items-center justify-between px-2.5 py-2 rounded-lg cursor-pointer transition-colors ${
                               isSelected
-                                ? "bg-indigo-600/20 text-indigo-300 font-medium border border-indigo-500/30"
-                                : "hover:bg-[#1B2030] text-slate-300"
+                                ? "bg-[#1F2244] text-white font-medium border border-[#3A4073]"
+                                : "hover:bg-[#151927] text-slate-300"
                             }`}
                           >
-                            <div className="flex items-center gap-2 truncate">
-                              <PlayCircle
-                                className={`w-3.5 h-3.5 shrink-0 ${
-                                  isSelected ? "text-indigo-400" : "text-emerald-400"
+                            <div className="flex items-center gap-2.5 truncate">
+                              <div
+                                className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${
+                                  isSelected
+                                    ? "border-indigo-400 text-indigo-400"
+                                    : isGreen
+                                    ? "border-emerald-500/80 text-emerald-400"
+                                    : "border-indigo-400/80 text-indigo-400"
                                 }`}
-                              />
-                              <span className="truncate">{sprint.name}</span>
+                              >
+                                <Play className="w-2 h-2 fill-current ml-0.5" />
+                              </div>
+                              <span className="truncate text-xs">{sprint.name}</span>
                             </div>
-                            <div className="flex items-center gap-1.5 shrink-0">
+                            <div className="flex items-center gap-2 shrink-0">
                               {sprint.taskCount !== undefined && (
-                                <span className="text-[10px] text-slate-400 font-mono">
+                                <span className="text-[11px] text-slate-400 font-mono">
                                   {sprint.taskCount}
                                 </span>
                               )}
-                              {isSelected && <Check className="w-3.5 h-3.5 text-indigo-400" />}
+                              {isSelected && <Check className="w-4 h-4 text-indigo-300" />}
                             </div>
                           </div>
                         );
@@ -426,80 +462,107 @@ export const CreateWorkItemModal: React.FC<CreateWorkItemModalProps> = ({
                     </div>
                   </div>
 
-                  {/* Sprints Grouped by Projects */}
+                  {/* Sprints Grouped by Projects (SHARED WITH ME & PROJECTS) */}
                   <div>
-                    <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400 px-2 py-1 font-semibold flex items-center justify-between">
-                      <span>Shared with me & Projects</span>
+                    <div className="text-[11px] font-bold text-[#64748B] tracking-wider uppercase px-2.5 py-1 flex items-center justify-between">
+                      <span>SHARED WITH ME & PROJECTS</span>
                     </div>
 
                     <div className="space-y-2 mt-1">
-                      {Object.entries(sprintGroups).map(([groupName, groupSprints]) => (
-                        <div key={groupName} className="space-y-0.5">
-                          <div className="flex items-center gap-1.5 px-2 py-1 text-[11px] font-medium text-slate-300">
-                            <Folder className="w-3.5 h-3.5 text-slate-400" />
-                            <span>{groupName}</span>
-                          </div>
+                      {projects.map((proj) => {
+                        const projSprints = sprints.filter(
+                          (s) => s.projectId === proj.id || s.projectGroup === proj.name
+                        );
+                        return (
+                          <div key={proj.id} className="space-y-1">
+                            <div className="flex items-center justify-between px-2.5 py-1 text-xs font-semibold text-slate-200 group">
+                              <div className="flex items-center gap-2">
+                                <Folder className="w-4 h-4 text-slate-400" />
+                                <span>{proj.name}</span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (onOpenCreateSprint) {
+                                    onOpenCreateSprint(proj.id);
+                                  } else {
+                                    setInternalSprintProjectId(proj.id);
+                                    setIsInternalSprintModalOpen(true);
+                                  }
+                                }}
+                                className="opacity-0 group-hover:opacity-100 text-[10px] text-indigo-400 hover:text-indigo-300 hover:bg-indigo-950/40 px-1.5 py-0.5 rounded transition-all flex items-center gap-1 cursor-pointer"
+                              >
+                                <Plus className="w-3 h-3" />
+                                <span>Sprint</span>
+                              </button>
+                            </div>
 
-                          <div className="pl-3 space-y-0.5 border-l border-slate-800 ml-3">
-                            {groupSprints.map((sprint) => {
-                              const isSelected = selectedSprintId === sprint.id;
-                              return (
-                                <div
-                                  key={sprint.id}
-                                  onClick={() => {
-                                    setSelectedSprintId(sprint.id);
-                                    setIsLocationOpen(false);
-                                  }}
-                                  className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors ${
-                                    isSelected
-                                      ? "bg-indigo-600/20 text-indigo-300 font-medium border border-indigo-500/30"
-                                      : "hover:bg-[#1B2030] text-slate-300"
-                                  }`}
-                                >
-                                  <div className="flex items-center gap-2 truncate">
-                                    <PlayCircle
-                                      className={`w-3.5 h-3.5 shrink-0 ${
-                                        sprint.status === "Active"
-                                          ? "text-indigo-400"
-                                          : "text-slate-500"
+                            {/* Sprints Tree Under Project */}
+                            <div className="border-l border-[#242C3F] ml-4 pl-3.5 space-y-1">
+                              {projSprints.length > 0 ? (
+                                projSprints.map((sprint) => {
+                                  const isSelected = selectedSprintId === sprint.id;
+                                  return (
+                                    <div
+                                      key={sprint.id}
+                                      onClick={() => {
+                                        setSelectedSprintId(sprint.id);
+                                        setIsLocationOpen(false);
+                                      }}
+                                      className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors ${
+                                        isSelected
+                                          ? "bg-[#1F2244] text-white font-medium border border-[#3A4073]"
+                                          : "hover:bg-[#151927] text-slate-300"
                                       }`}
-                                    />
-                                    <span className="truncate">{sprint.name}</span>
-                                  </div>
-                                  <div className="flex items-center gap-1.5 shrink-0">
-                                    {sprint.taskCount !== undefined && (
-                                      <span className="text-[10px] text-slate-400 font-mono">
-                                        {sprint.taskCount}
-                                      </span>
-                                    )}
-                                    {isSelected && <Check className="w-3.5 h-3.5 text-indigo-400" />}
-                                  </div>
+                                    >
+                                      <div className="flex items-center gap-2.5 truncate">
+                                        <div className="w-4 h-4 rounded-full border border-indigo-400 text-indigo-400 flex items-center justify-center shrink-0">
+                                          <Play className="w-2 h-2 fill-current ml-0.5" />
+                                        </div>
+                                        <span className="truncate text-xs">{sprint.name}</span>
+                                      </div>
+                                      <div className="flex items-center gap-2 shrink-0">
+                                        {sprint.taskCount !== undefined && (
+                                          <span className="text-[11px] text-slate-400 font-mono">
+                                            {sprint.taskCount}
+                                          </span>
+                                        )}
+                                        {isSelected && <Check className="w-4 h-4 text-indigo-300" />}
+                                      </div>
+                                    </div>
+                                  );
+                                })
+                              ) : (
+                                <div className="text-[11px] text-slate-500 italic py-1">
+                                  No sprints yet. Click +Sprint to add one.
                                 </div>
-                              );
-                            })}
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
 
-                  {/* Hierarchical WBS Deliverables (Milestones, Epics & Features) */}
-                  <div className="pt-2 border-t border-slate-800">
+                  {/* Optional WBS Deliverable Parent (Milestones, Epics & Features) */}
+                  <div className="pt-2 border-t border-[#1E2333]">
                     <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400 px-2 py-1 font-semibold flex items-center justify-between">
                       <span>WBS Deliverable Parent</span>
                       {selectedParentId && (
                         <button
                           type="button"
                           onClick={() => handleSelectParent(null)}
-                          className="text-xs text-sky-400 hover:underline"
+                          className="text-xs text-sky-400 hover:underline cursor-pointer"
                         >
                           Clear Parent
                         </button>
                       )}
                     </div>
-                    <div className="space-y-0.5 mt-1 max-h-48 overflow-y-auto">
+                    <div className="space-y-0.5 mt-1 max-h-32 overflow-y-auto">
                       {filteredDeliverables
                         .filter((i) => i.type === "Milestone" || i.type === "Epic" || i.type === "Feature")
+                        .slice(0, 5)
                         .map((item) => {
                           const isSelected = selectedParentId === item.id;
                           return (
@@ -509,10 +572,10 @@ export const CreateWorkItemModal: React.FC<CreateWorkItemModalProps> = ({
                                 handleSelectParent(item.id);
                                 setIsLocationOpen(false);
                               }}
-                              className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors ${
+                              className={`flex items-center justify-between px-2 py-1 rounded-lg cursor-pointer transition-colors ${
                                 isSelected
                                   ? "bg-sky-600/20 text-sky-300 font-medium border border-sky-500/30"
-                                  : "hover:bg-[#1B2030] text-slate-300"
+                                  : "hover:bg-[#151927] text-slate-300"
                               }`}
                             >
                               <div className="flex items-center gap-2 truncate">
@@ -521,7 +584,7 @@ export const CreateWorkItemModal: React.FC<CreateWorkItemModalProps> = ({
                                 </span>
                                 <span className="truncate">{item.title}</span>
                               </div>
-                              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 uppercase">
+                              <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-slate-800 text-slate-400 uppercase">
                                 {item.type}
                               </span>
                             </div>
@@ -529,6 +592,41 @@ export const CreateWorkItemModal: React.FC<CreateWorkItemModalProps> = ({
                         })}
                     </div>
                   </div>
+                </div>
+
+                {/* Popover Footer: ClickUp Style + New Project & + New Sprint */}
+                <div className="p-2 border-t border-[#1E2333] bg-[#0A0D15] flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsLocationOpen(false);
+                      if (onOpenCreateProject) {
+                        onOpenCreateProject();
+                      } else {
+                        setIsInternalProjectModalOpen(true);
+                      }
+                    }}
+                    className="flex-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white bg-[#151928] hover:bg-[#1E2438] border border-[#273046] flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>New Project</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsLocationOpen(false);
+                      if (onOpenCreateSprint) {
+                        onOpenCreateSprint(activeProjectId);
+                      } else {
+                        setInternalSprintProjectId(activeProjectId || "proj-flutter");
+                        setIsInternalSprintModalOpen(true);
+                      }
+                    }}
+                    className="flex-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white bg-[#151928] hover:bg-[#1E2438] border border-[#273046] flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>New Sprint</span>
+                  </button>
                 </div>
               </div>
             )}
@@ -542,11 +640,13 @@ export const CreateWorkItemModal: React.FC<CreateWorkItemModalProps> = ({
                 setIsTypeOpen(!isTypeOpen);
                 setIsLocationOpen(false);
               }}
-              className="bg-[#181B26] hover:bg-[#202534] text-slate-200 px-3 py-1.5 rounded-lg border border-[#2B3145] flex items-center gap-1.5 text-xs font-medium cursor-pointer transition-colors"
+              className="bg-[#121623] hover:bg-[#181E2F] text-slate-200 px-3 py-1.5 rounded-lg border border-[#242C3F] flex items-center gap-1.5 text-xs font-medium cursor-pointer transition-colors"
             >
-              <CheckSquare className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="w-4 h-4 rounded-sm border border-indigo-400 text-indigo-400 flex items-center justify-center shrink-0">
+                <Check className="w-2.5 h-2.5 stroke-[3]" />
+              </span>
               <span>{type}</span>
-              <ChevronDown className="w-3 h-3 text-slate-400 ml-0.5" />
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400 ml-0.5" />
             </button>
 
             {isTypeOpen && (
@@ -1171,6 +1271,33 @@ export const CreateWorkItemModal: React.FC<CreateWorkItemModalProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Embedded Project Creation Modal */}
+      {isInternalProjectModalOpen && (
+        <CreateProjectModal
+          isOpen={isInternalProjectModalOpen}
+          onClose={() => setIsInternalProjectModalOpen(false)}
+          onSubmit={(newProj) => {
+            if (onAddNewProject) onAddNewProject(newProj);
+            setIsInternalProjectModalOpen(false);
+          }}
+        />
+      )}
+
+      {/* Embedded Sprint Creation Modal */}
+      {isInternalSprintModalOpen && (
+        <CreateSprintModal
+          isOpen={isInternalSprintModalOpen}
+          onClose={() => setIsInternalSprintModalOpen(false)}
+          onSubmit={(newSprint) => {
+            if (onAddNewSprint) onAddNewSprint(newSprint);
+            setSelectedSprintId(newSprint.id);
+            setIsInternalSprintModalOpen(false);
+          }}
+          projects={projects}
+          defaultProjectId={internalSprintProjectId}
+        />
+      )}
     </div>
   );
 };

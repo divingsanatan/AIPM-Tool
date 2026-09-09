@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { RaidItem, RaidCategory, Stakeholder, EvmMetrics } from "../types";
+import { RaidItem, RaidCategory, Stakeholder, EvmMetrics, Project, Sprint } from "../types";
 import {
   ShieldAlert,
   AlertTriangle,
@@ -12,6 +12,7 @@ import {
   Filter,
   Trash2,
   Edit2,
+  Pencil,
   FileCheck2,
   Copy,
   Printer,
@@ -21,30 +22,50 @@ import {
 
 interface RaidViewProps {
   raidItems: RaidItem[];
+  allProjectRaidItems?: RaidItem[];
+  sprints?: Sprint[];
+  wbsItems?: WbsItem[];
   stakeholders: Stakeholder[];
   evmMetrics: EvmMetrics;
   onAddRaidItem: (item: RaidItem) => void;
   onUpdateRaidItem: (item: RaidItem) => void;
   onDeleteRaidItem: (id: string) => void;
   onRequestRiskReport: () => void;
+  activeProject?: Project | null;
+  selectedSprint?: Sprint | null;
+  onSelectSprint?: (sprintId: string | null) => void;
+  onClearSprint?: () => void;
 }
 
 export const RaidView: React.FC<RaidViewProps> = ({
   raidItems,
+  allProjectRaidItems,
+  sprints,
+  wbsItems,
   stakeholders,
   evmMetrics,
   onAddRaidItem,
   onUpdateRaidItem,
   onDeleteRaidItem,
   onRequestRiskReport,
+  activeProject,
+  selectedSprint,
+  onSelectSprint,
+  onClearSprint,
 }) => {
   const [activeCategory, setActiveCategory] = useState<RaidCategory | "ALL">("ALL");
+  const [sprintScopeFilter, setSprintScopeFilter] = useState<"sprint_only" | "all_project">("sprint_only");
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<RaidItem | null>(null);
 
   // Instant report modal
   const [reportMarkdown, setReportMarkdown] = useState<string | null>(null);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+
+  // Determine effective items based on sprint scope mode
+  const projectPool = allProjectRaidItems || raidItems;
+  const effectiveRaidItems =
+    selectedSprint && sprintScopeFilter === "all_project" ? projectPool : raidItems;
 
   // Form state
   const [formData, setFormData] = useState<Partial<RaidItem>>({
@@ -61,51 +82,139 @@ export const RaidView: React.FC<RaidViewProps> = ({
     impactIfFalse: "",
     status: "Identified",
     ownerId: stakeholders[0]?.id || "",
+    sprintId: selectedSprint?.id || "",
+    wbsItemId: "",
     dateRaised: new Date().toISOString().split("T")[0],
     targetResolutionDate: new Date(Date.now() + 21 * 86400000).toISOString().split("T")[0],
   });
 
   const getOwner = (id: string) => stakeholders.find((s) => s.id === id);
 
-  const filteredItems = raidItems.filter((item) => {
+  const filteredItems = effectiveRaidItems.filter((item) => {
     if (activeCategory !== "ALL" && item.category !== activeCategory) return false;
     return true;
   });
 
-  const risks = raidItems.filter((i) => i.category === "Risk");
-  const issues = raidItems.filter((i) => i.category === "Issue");
-  const assumptions = raidItems.filter((i) => i.category === "Assumption");
-  const dependencies = raidItems.filter((i) => i.category === "Dependency");
+  const risks = effectiveRaidItems.filter((i) => i.category === "Risk");
+  const issues = effectiveRaidItems.filter((i) => i.category === "Issue");
+  const assumptions = effectiveRaidItems.filter((i) => i.category === "Assumption");
+  const dependencies = effectiveRaidItems.filter((i) => i.category === "Dependency");
 
-  const handleSaveNew = (e: React.FormEvent) => {
+  const handleOpenAdd = () => {
+    setEditingItem(null);
+    setFormData({
+      category: activeCategory === "ALL" ? "Risk" : activeCategory,
+      title: "",
+      description: "",
+      probability: 3,
+      impact: 3,
+      severity: "Medium",
+      mitigationStrategy: "",
+      contingencyPlan: "",
+      resolutionPlan: "",
+      rootCause: "",
+      dependencyType: "Finish-to-Start (FS)",
+      upstreamDownstream: "Upstream",
+      impactIfFalse: "",
+      status: "Identified",
+      ownerId: stakeholders[0]?.id || "",
+      sprintId: selectedSprint?.id || "",
+      wbsItemId: "",
+      dateRaised: new Date().toISOString().split("T")[0],
+      targetResolutionDate: new Date(Date.now() + 21 * 86400000).toISOString().split("T")[0],
+    });
+    setIsAddModalOpen(true);
+  };
+
+  const handleOpenEdit = (item: RaidItem) => {
+    setEditingItem(item);
+    setFormData({
+      category: item.category,
+      title: item.title,
+      description: item.description,
+      probability: item.probability ?? 3,
+      impact: item.impact ?? 3,
+      severity: item.severity ?? "Medium",
+      mitigationStrategy: item.mitigationStrategy ?? "",
+      contingencyPlan: item.contingencyPlan ?? "",
+      resolutionPlan: item.resolutionPlan ?? "",
+      rootCause: item.rootCause ?? "",
+      dependencyType: item.dependencyType ?? "Finish-to-Start (FS)",
+      upstreamDownstream: item.upstreamDownstream ?? "Upstream",
+      impactIfFalse: item.impactIfFalse ?? "",
+      status: item.status,
+      ownerId: item.ownerId,
+      sprintId: item.sprintId || "",
+      wbsItemId: item.wbsItemId || "",
+      dateRaised: item.dateRaised,
+      targetResolutionDate: item.targetResolutionDate,
+    });
+    setIsAddModalOpen(true);
+  };
+
+  const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.title?.trim()) return;
 
     const prob = Number(formData.probability) || 3;
     const imp = Number(formData.impact) || 3;
 
-    const newItem: RaidItem = {
-      id: `raid-${Date.now()}`,
-      category: formData.category as RaidCategory,
-      title: formData.title.trim(),
-      description: formData.description || "",
-      probability: prob as any,
-      impact: imp as any,
-      riskExposure: prob * imp,
-      severity: formData.severity as any,
-      mitigationStrategy: formData.mitigationStrategy || "",
-      contingencyPlan: formData.contingencyPlan || "",
-      dependencyType: formData.dependencyType as any,
-      upstreamDownstream: formData.upstreamDownstream as any,
-      impactIfFalse: formData.impactIfFalse || "",
-      status: formData.status as any,
-      ownerId: formData.ownerId || stakeholders[0]?.id || "",
-      dateRaised: formData.dateRaised || new Date().toISOString().split("T")[0],
-      targetResolutionDate: formData.targetResolutionDate || new Date().toISOString().split("T")[0],
-    };
-
-    onAddRaidItem(newItem);
+    if (editingItem) {
+      const updated: RaidItem = {
+        ...editingItem,
+        category: formData.category as RaidCategory,
+        title: formData.title.trim(),
+        description: formData.description || "",
+        probability: prob as any,
+        impact: imp as any,
+        riskExposure: prob * imp,
+        severity: formData.severity as any,
+        mitigationStrategy: formData.mitigationStrategy || "",
+        contingencyPlan: formData.contingencyPlan || "",
+        resolutionPlan: formData.resolutionPlan || "",
+        rootCause: formData.rootCause || "",
+        dependencyType: formData.dependencyType as any,
+        upstreamDownstream: formData.upstreamDownstream as any,
+        impactIfFalse: formData.impactIfFalse || "",
+        status: formData.status as any,
+        ownerId: formData.ownerId || stakeholders[0]?.id || "",
+        sprintId: formData.sprintId || undefined,
+        wbsItemId: formData.wbsItemId || undefined,
+        dateRaised: formData.dateRaised || editingItem.dateRaised,
+        targetResolutionDate: formData.targetResolutionDate || editingItem.targetResolutionDate,
+      };
+      onUpdateRaidItem(updated);
+    } else {
+      const newItem: RaidItem = {
+        id: `raid-${Date.now()}`,
+        category: formData.category as RaidCategory,
+        title: formData.title.trim(),
+        description: formData.description || "",
+        probability: prob as any,
+        impact: imp as any,
+        riskExposure: prob * imp,
+        severity: formData.severity as any,
+        mitigationStrategy: formData.mitigationStrategy || "",
+        contingencyPlan: formData.contingencyPlan || "",
+        resolutionPlan: formData.resolutionPlan || "",
+        rootCause: formData.rootCause || "",
+        dependencyType: formData.dependencyType as any,
+        upstreamDownstream: formData.upstreamDownstream as any,
+        impactIfFalse: formData.impactIfFalse || "",
+        status: formData.status as any,
+        ownerId: formData.ownerId || stakeholders[0]?.id || "",
+        projectId: activeProject?.id || "proj-flutter",
+        sprintId: formData.sprintId || (selectedSprint ? selectedSprint.id : undefined),
+        wbsItemId: formData.wbsItemId || undefined,
+        dateRaised: formData.dateRaised || new Date().toISOString().split("T")[0],
+        targetResolutionDate:
+          formData.targetResolutionDate ||
+          new Date(Date.now() + 21 * 86400000).toISOString().split("T")[0],
+      };
+      onAddRaidItem(newItem);
+    }
     setIsAddModalOpen(false);
+    setEditingItem(null);
   };
 
   const handleGenerateRiskReport = async () => {
@@ -172,23 +281,7 @@ export const RaidView: React.FC<RaidViewProps> = ({
 
             <button
               id="add-raid-item-btn"
-              onClick={() => {
-                setFormData({
-                  category: "Risk",
-                  title: "",
-                  description: "",
-                  probability: 3,
-                  impact: 3,
-                  severity: "Medium",
-                  mitigationStrategy: "",
-                  contingencyPlan: "",
-                  status: "Identified",
-                  ownerId: stakeholders[0]?.id || "",
-                  dateRaised: new Date().toISOString().split("T")[0],
-                  targetResolutionDate: new Date(Date.now() + 21 * 86400000).toISOString().split("T")[0],
-                });
-                setIsAddModalOpen(true);
-              }}
+              onClick={handleOpenAdd}
               className="px-3 py-1.5 bg-[#38BDF8] hover:bg-[#0EA5E9] text-[#0F172A] text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
             >
               <Plus className="h-3.5 w-3.5" />
@@ -201,7 +294,7 @@ export const RaidView: React.FC<RaidViewProps> = ({
         <div className="mt-3 pt-3 border-t border-[#1E293B] flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0 font-mono">
             {[
-              { id: "ALL", label: `All (${raidItems.length})`, icon: ShieldAlert },
+              { id: "ALL", label: `All (${effectiveRaidItems.length})`, icon: ShieldAlert },
               { id: "Risk", label: `Risks (${risks.length})`, icon: ShieldAlert },
               { id: "Assumption", label: `Assumptions (${assumptions.length})`, icon: HelpCircle },
               { id: "Issue", label: `Issues (${issues.length})`, icon: AlertTriangle },
@@ -213,7 +306,7 @@ export const RaidView: React.FC<RaidViewProps> = ({
                 <button
                   key={tab.id}
                   onClick={() => setActiveCategory(tab.id as any)}
-                  className={`px-2.5 py-1 rounded text-[10px] flex items-center gap-1.5 transition-colors cursor-pointer ${
+                  className={`px-2.5 py-1 rounded text-[10px] flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
                     isActive
                       ? "bg-[#38BDF8] text-[#0F172A] font-bold shadow-xs"
                       : "bg-[#141C2E] text-slate-300 hover:text-white border border-slate-800"
@@ -227,6 +320,75 @@ export const RaidView: React.FC<RaidViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Active Scope Information Bar */}
+      {activeProject && (
+        <div className="bg-[#0D1527] border border-[#1E2E50] rounded-xl p-3 sm:p-4 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+            </div>
+            <span className="text-slate-300 font-medium">
+              Filtered Scope:{" "}
+              <strong className="text-white">{activeProject.name}</strong>
+              {selectedSprint && (
+                <>
+                  {" › "}
+                  <span className="text-emerald-300 font-semibold">{selectedSprint.name}</span>
+                </>
+              )}
+            </span>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+              {effectiveRaidItems.length} Item{effectiveRaidItems.length === 1 ? "" : "s"}
+            </span>
+            {selectedSprint && (
+              <span className="text-[11px] text-slate-400 font-mono">
+                ({raidItems.length} assigned to sprint • {projectPool.length} in project)
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 text-[11px] flex-wrap">
+            {selectedSprint && (
+              <div className="flex items-center bg-[#070B14] p-0.5 rounded-lg border border-[#1E293B]">
+                <button
+                  type="button"
+                  onClick={() => setSprintScopeFilter("sprint_only")}
+                  className={`px-2.5 py-1 rounded text-xs transition-colors cursor-pointer font-medium ${
+                    sprintScopeFilter === "sprint_only"
+                      ? "bg-emerald-600 text-white shadow-xs font-semibold"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  {selectedSprint.name} Only ({raidItems.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSprintScopeFilter("all_project")}
+                  className={`px-2.5 py-1 rounded text-xs transition-colors cursor-pointer font-medium ${
+                    sprintScopeFilter === "all_project"
+                      ? "bg-amber-600 text-white shadow-xs font-semibold"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  All Project RAID ({projectPool.length})
+                </button>
+              </div>
+            )}
+
+            {selectedSprint && onClearSprint && (
+              <button
+                type="button"
+                onClick={onClearSprint}
+                className="px-2.5 py-1 rounded bg-[#162340] hover:bg-[#1E3058] text-slate-300 hover:text-white border border-[#253966] transition-colors cursor-pointer"
+              >
+                Clear Sprint Filter
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 5x5 Risk Heatmap Matrix (When looking at Risks) */}
       {(activeCategory === "ALL" || activeCategory === "Risk") && (
@@ -246,51 +408,53 @@ export const RaidView: React.FC<RaidViewProps> = ({
           </div>
 
           {/* 5x5 Heatmap Grid */}
-          <div className="mt-4 grid grid-cols-6 gap-1 text-center font-mono text-xs">
-            <div className="p-2 text-slate-500 font-semibold text-[11px] flex items-center justify-center">
-              P \ I
+          <div className="mt-4 overflow-x-auto pb-1">
+            <div className="min-w-[540px] grid grid-cols-6 gap-1 text-center font-mono text-xs">
+              <div className="p-2 text-slate-500 font-semibold text-[11px] flex items-center justify-center">
+                P \ I
+              </div>
+              <div className="p-2 bg-slate-950 text-slate-400 font-bold rounded">1: Very Low</div>
+              <div className="p-2 bg-slate-950 text-slate-400 font-bold rounded">2: Low</div>
+              <div className="p-2 bg-slate-950 text-slate-400 font-bold rounded">3: Moderate</div>
+              <div className="p-2 bg-slate-950 text-slate-400 font-bold rounded">4: High</div>
+              <div className="p-2 bg-slate-950 text-slate-400 font-bold rounded">5: Critical</div>
+
+              {[5, 4, 3, 2, 1].map((prob) => (
+                <React.Fragment key={prob}>
+                  <div className="p-2 bg-slate-950 text-slate-400 font-bold flex items-center justify-center rounded">
+                    P{prob}
+                  </div>
+                  {[1, 2, 3, 4, 5].map((imp) => {
+                    const exposure = prob * imp;
+                    const matchingRisks = risks.filter(
+                      (r) => (r.probability || 3) === prob && (r.impact || 3) === imp
+                    );
+                    const isCritical = exposure >= 15;
+                    const isMedium = exposure >= 8 && exposure < 15;
+
+                    return (
+                      <div
+                        key={imp}
+                        className={`p-2.5 rounded border transition-all flex flex-col items-center justify-center min-h-[56px] ${
+                          isCritical
+                            ? "bg-rose-950/40 border-rose-800/60 text-rose-300"
+                            : isMedium
+                            ? "bg-amber-950/30 border-amber-800/50 text-amber-300"
+                            : "bg-slate-950/50 border-slate-800 text-slate-400"
+                        }`}
+                      >
+                        <span className="text-[10px] font-bold opacity-60">Score {exposure}</span>
+                        {matchingRisks.length > 0 && (
+                          <span className="mt-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-white/20 text-white">
+                            {matchingRisks.length} {matchingRisks.length === 1 ? "Risk" : "Risks"}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </React.Fragment>
+              ))}
             </div>
-            <div className="p-2 bg-slate-950 text-slate-400 font-bold rounded">1: Very Low</div>
-            <div className="p-2 bg-slate-950 text-slate-400 font-bold rounded">2: Low</div>
-            <div className="p-2 bg-slate-950 text-slate-400 font-bold rounded">3: Moderate</div>
-            <div className="p-2 bg-slate-950 text-slate-400 font-bold rounded">4: High</div>
-            <div className="p-2 bg-slate-950 text-slate-400 font-bold rounded">5: Critical</div>
-
-            {[5, 4, 3, 2, 1].map((prob) => (
-              <React.Fragment key={prob}>
-                <div className="p-2 bg-slate-950 text-slate-400 font-bold flex items-center justify-center rounded">
-                  P{prob}
-                </div>
-                {[1, 2, 3, 4, 5].map((imp) => {
-                  const exposure = prob * imp;
-                  const matchingRisks = risks.filter(
-                    (r) => (r.probability || 3) === prob && (r.impact || 3) === imp
-                  );
-                  const isCritical = exposure >= 15;
-                  const isMedium = exposure >= 8 && exposure < 15;
-
-                  return (
-                    <div
-                      key={imp}
-                      className={`p-2.5 rounded border transition-all flex flex-col items-center justify-center min-h-[56px] ${
-                        isCritical
-                          ? "bg-rose-950/40 border-rose-800/60 text-rose-300"
-                          : isMedium
-                          ? "bg-amber-950/30 border-amber-800/50 text-amber-300"
-                          : "bg-slate-950/50 border-slate-800 text-slate-400"
-                      }`}
-                    >
-                      <span className="text-[10px] font-bold opacity-60">Score {exposure}</span>
-                      {matchingRisks.length > 0 && (
-                        <span className="mt-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-white/20 text-white">
-                          {matchingRisks.length} {matchingRisks.length === 1 ? "Risk" : "Risks"}
-                        </span>
-                      )}
-                    </div>
-                  );
-                })}
-              </React.Fragment>
-            ))}
           </div>
         </div>
       )}
@@ -298,17 +462,17 @@ export const RaidView: React.FC<RaidViewProps> = ({
       {/* RAID Log Table */}
       <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-slate-300">
+          <table className="w-full text-left text-xs text-slate-300 min-w-[840px]">
             <thead className="bg-[#060911] border-b border-[#1E293B] uppercase text-[10px] font-bold text-slate-400 tracking-wider font-mono">
               <tr>
-                <th className="py-3.5 pl-5 pr-3">Category</th>
-                <th className="py-3.5 px-3">Title & Root Cause / Description</th>
-                <th className="py-3.5 px-3">Exposure / Severity</th>
-                <th className="py-3.5 px-3">Mitigation / Resolution Plan</th>
-                <th className="py-3.5 px-3">Assigned Owner</th>
-                <th className="py-3.5 px-3">Status</th>
-                <th className="py-3.5 px-3">Target Date</th>
-                <th className="py-3.5 pr-5 pl-3 text-right">Actions</th>
+                <th className="py-3.5 pl-5 pr-3 whitespace-nowrap">Category</th>
+                <th className="py-3.5 px-3 min-w-[200px]">Title & Root Cause / Description</th>
+                <th className="py-3.5 px-3 whitespace-nowrap">Exposure / Severity</th>
+                <th className="py-3.5 px-3 min-w-[200px]">Mitigation / Resolution Plan</th>
+                <th className="py-3.5 px-3 whitespace-nowrap">Assigned Owner</th>
+                <th className="py-3.5 px-3 whitespace-nowrap">Status</th>
+                <th className="py-3.5 px-3 whitespace-nowrap">Created Date</th>
+                <th className="py-3.5 pr-5 pl-3 text-right whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#1E293B]/70">
@@ -318,9 +482,9 @@ export const RaidView: React.FC<RaidViewProps> = ({
                 return (
                   <tr key={item.id} className="hover:bg-[#0E1526] transition-colors">
                     {/* Category badge */}
-                    <td className="py-3 pl-5 pr-3">
+                    <td className="py-3 pl-5 pr-3 whitespace-nowrap">
                       <span
-                        className={`px-2.5 py-1 rounded text-[11px] font-bold border ${
+                        className={`px-2.5 py-1 rounded text-[11px] font-bold border inline-block ${
                           item.category === "Risk"
                             ? "bg-amber-500/10 text-amber-300 border-amber-500/30"
                             : item.category === "Issue"
@@ -335,7 +499,7 @@ export const RaidView: React.FC<RaidViewProps> = ({
                     </td>
 
                     {/* Title & Desc */}
-                    <td className="py-3 px-3 max-w-xs">
+                    <td className="py-3 px-3 min-w-[200px] max-w-xs">
                       <span className="font-semibold text-white block">{item.title}</span>
                       <span className="text-[11px] text-slate-400 line-clamp-2 mt-0.5">
                         {item.description}
@@ -343,11 +507,11 @@ export const RaidView: React.FC<RaidViewProps> = ({
                     </td>
 
                     {/* Exposure / Severity */}
-                    <td className="py-3 px-3 font-mono">
+                    <td className="py-3 px-3 font-mono whitespace-nowrap">
                       {item.category === "Risk" ? (
                         <div>
                           <span
-                            className={`px-2 py-0.5 rounded text-xs font-bold ${
+                            className={`px-2 py-0.5 rounded text-xs font-bold inline-block ${
                               (item.riskExposure || 0) >= 15
                                 ? "bg-rose-500/20 text-rose-400 border border-rose-500/30"
                                 : (item.riskExposure || 0) >= 8
@@ -360,7 +524,7 @@ export const RaidView: React.FC<RaidViewProps> = ({
                         </div>
                       ) : item.category === "Issue" ? (
                         <span
-                          className={`px-2 py-0.5 rounded text-xs font-bold ${
+                          className={`px-2 py-0.5 rounded text-xs font-bold inline-block ${
                             item.severity === "Critical"
                               ? "bg-rose-600 text-white"
                               : item.severity === "High"
@@ -380,7 +544,7 @@ export const RaidView: React.FC<RaidViewProps> = ({
                     </td>
 
                     {/* Mitigation Strategy */}
-                    <td className="py-3 px-3 max-w-xs text-slate-300 text-[11px]">
+                    <td className="py-3 px-3 min-w-[200px] max-w-xs text-slate-300 text-[11px]">
                       {item.category === "Risk" ? (
                         <div>
                           <span className="font-medium text-slate-200 block">
@@ -402,7 +566,7 @@ export const RaidView: React.FC<RaidViewProps> = ({
                     </td>
 
                     {/* Owner */}
-                    <td className="py-3 px-3 text-slate-200">
+                    <td className="py-3 px-3 text-slate-200 whitespace-nowrap">
                       {owner ? (
                         <div>
                           <span className="font-medium block">{owner.name}</span>
@@ -414,7 +578,7 @@ export const RaidView: React.FC<RaidViewProps> = ({
                     </td>
 
                     {/* Status */}
-                    <td className="py-3 px-3">
+                    <td className="py-3 px-3 whitespace-nowrap">
                       <select
                         value={item.status}
                         onChange={(e) =>
@@ -433,22 +597,35 @@ export const RaidView: React.FC<RaidViewProps> = ({
                       </select>
                     </td>
 
-                    {/* Date */}
-                    <td className="py-3 px-3 font-mono text-slate-400">{item.targetResolutionDate}</td>
+                    {/* Creation Date */}
+                    <td className="py-3 px-3 font-mono text-slate-400 whitespace-nowrap">
+                      {item.dateRaised || item.targetResolutionDate || new Date().toISOString().split("T")[0]}
+                    </td>
 
                     {/* Actions */}
                     <td className="py-3 pr-5 pl-3 text-right whitespace-nowrap">
-                      <button
-                        onClick={() => {
-                          if (confirm(`Delete ${item.category} "${item.title}"?`)) {
-                            onDeleteRaidItem(item.id);
-                          }
-                        }}
-                        className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors cursor-pointer"
-                        title="Delete RAID Item"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEdit(item)}
+                          className="p-1.5 rounded text-slate-400 hover:text-sky-300 hover:bg-slate-800 transition-colors cursor-pointer"
+                          title="Edit RAID Item"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (confirm(`Delete ${item.category} "${item.title}"?`)) {
+                              onDeleteRaidItem(item.id);
+                            }
+                          }}
+                          className="p-1.5 rounded text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors cursor-pointer"
+                          title="Delete RAID Item"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -458,22 +635,34 @@ export const RaidView: React.FC<RaidViewProps> = ({
         </div>
       </div>
 
-      {/* Add RAID Modal */}
+      {/* Add / Edit RAID Modal */}
       {isAddModalOpen && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/80 backdrop-blur-xs p-3 sm:p-5 flex items-start sm:items-center justify-center">
           <div className="relative bg-[#0B0F19] border border-[#1E293B] rounded-xl max-w-xl w-full my-auto max-h-[calc(100vh-1.5rem)] sm:max-h-[calc(100vh-2.5rem)] flex flex-col shadow-2xl animate-in fade-in zoom-in-95 duration-150 overflow-hidden">
             <div className="flex items-center justify-between px-5 sm:px-6 py-3.5 border-b border-[#1E293B] shrink-0 bg-[#060911]">
-              <h3 className="text-sm sm:text-base font-bold text-white font-mono">Log RAID Item</h3>
+              <div className="flex items-center gap-2">
+                {editingItem ? (
+                  <Pencil className="w-4 h-4 text-sky-400" />
+                ) : (
+                  <Plus className="w-4 h-4 text-emerald-400" />
+                )}
+                <h3 className="text-sm sm:text-base font-bold text-white font-mono">
+                  {editingItem ? `Edit ${editingItem.category}: ${editingItem.title}` : "Log RAID Item"}
+                </h3>
+              </div>
               <button
                 type="button"
-                onClick={() => setIsAddModalOpen(false)}
+                onClick={() => {
+                  setIsAddModalOpen(false);
+                  setEditingItem(null);
+                }}
                 className="text-slate-400 hover:text-white p-1 rounded-md cursor-pointer transition-colors"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveNew} className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-3.5 text-xs">
+            <form onSubmit={handleSave} className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-3.5 text-xs">
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-slate-300 font-medium mb-1">RAID Category *</label>
@@ -527,6 +716,7 @@ export const RaidView: React.FC<RaidViewProps> = ({
                 />
               </div>
 
+              {/* Category-Specific Form Attributes */}
               {formData.category === "Risk" && (
                 <>
                   <div className="grid grid-cols-2 gap-4">
@@ -582,10 +772,125 @@ export const RaidView: React.FC<RaidViewProps> = ({
                 </>
               )}
 
+              {formData.category === "Issue" && (
+                <div className="space-y-3.5">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-slate-300 font-medium mb-1">Severity</label>
+                      <select
+                        value={formData.severity || "Medium"}
+                        onChange={(e) => setFormData({ ...formData, severity: e.target.value as any })}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white"
+                      >
+                        <option value="Low">Low</option>
+                        <option value="Medium">Medium</option>
+                        <option value="High">High</option>
+                        <option value="Critical">Critical</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-slate-300 font-medium mb-1">Root Cause Analysis</label>
+                      <input
+                        type="text"
+                        value={formData.rootCause || ""}
+                        onChange={(e) => setFormData({ ...formData, rootCause: e.target.value })}
+                        placeholder="Identified origin or root defect..."
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-slate-300 font-medium mb-1">Resolution Plan / Action Plan</label>
+                    <input
+                      type="text"
+                      value={formData.resolutionPlan || ""}
+                      onChange={(e) => setFormData({ ...formData, resolutionPlan: e.target.value })}
+                      placeholder="Active steps taken to resolve this issue..."
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {formData.category === "Assumption" && (
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">Impact If Invalidated / Proves False</label>
+                  <input
+                    type="text"
+                    value={formData.impactIfFalse || ""}
+                    onChange={(e) => setFormData({ ...formData, impactIfFalse: e.target.value })}
+                    placeholder="Consequences to timeline, scope or budget if assumption fails..."
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white"
+                  />
+                </div>
+              )}
+
+              {formData.category === "Dependency" && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-slate-300 font-medium mb-1">Direction</label>
+                    <select
+                      value={formData.upstreamDownstream || "Upstream"}
+                      onChange={(e) => setFormData({ ...formData, upstreamDownstream: e.target.value as any })}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white"
+                    >
+                      <option value="Upstream">Upstream (We depend on them)</option>
+                      <option value="Downstream">Downstream (They depend on us)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-slate-300 font-medium mb-1">Dependency Type</label>
+                    <select
+                      value={formData.dependencyType || "Finish-to-Start (FS)"}
+                      onChange={(e) => setFormData({ ...formData, dependencyType: e.target.value as any })}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white"
+                    >
+                      <option value="Finish-to-Start (FS)">Finish-to-Start (FS)</option>
+                      <option value="Start-to-Start (SS)">Start-to-Start (SS)</option>
+                      <option value="Finish-to-Finish (FF)">Finish-to-Finish (FF)</option>
+                      <option value="Start-to-Finish (SF)">Start-to-Finish (SF)</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              {/* Status and Creation Date */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-800">
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">Status</label>
+                  <select
+                    value={formData.status}
+                    onChange={(e) => setFormData({ ...formData, status: e.target.value as any })}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono"
+                  >
+                    <option value="Identified">Identified</option>
+                    <option value="Open">Open</option>
+                    <option value="In Progress">In Progress</option>
+                    <option value="Mitigated">Mitigated</option>
+                    <option value="Accepted">Accepted</option>
+                    <option value="Closed">Closed</option>
+                    <option value="Resolved">Resolved</option>
+                    <option value="Validated">Validated</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">Creation Date (Auto)</label>
+                  <input
+                    type="date"
+                    value={formData.dateRaised || new Date().toISOString().split("T")[0]}
+                    onChange={(e) => setFormData({ ...formData, dateRaised: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono"
+                  />
+                </div>
+              </div>
+
               <div className="pt-3.5 border-t border-[#1E293B] flex justify-end gap-2.5 shrink-0 bg-[#060911]">
                 <button
                   type="button"
-                  onClick={() => setIsAddModalOpen(false)}
+                  onClick={() => {
+                    setIsAddModalOpen(false);
+                    setEditingItem(null);
+                  }}
                   className="px-4 py-2 bg-[#141C2E] hover:bg-slate-800 text-slate-300 rounded-lg cursor-pointer transition-colors border border-slate-700"
                 >
                   Cancel
@@ -594,7 +899,7 @@ export const RaidView: React.FC<RaidViewProps> = ({
                   type="submit"
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg cursor-pointer transition-colors"
                 >
-                  Log Item
+                  {editingItem ? "Save Changes" : "Log Item"}
                 </button>
               </div>
             </form>

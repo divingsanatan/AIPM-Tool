@@ -34,7 +34,9 @@ export interface Sprint {
   endDate: string;
   status: "Active" | "Planned" | "Completed";
   projectGroup: string; // e.g. "Flutter Project", "Angular Project", "Core Banking Platform"
+  projectId?: string;
   taskCount?: number;
+  goal?: string;
 }
 
 export interface WbsItem {
@@ -62,6 +64,8 @@ export interface WbsItem {
   earnedValue?: number;
   costVariance?: number;
   remainingHours?: number;
+  projectId?: string;
+  projectName?: string;
   sprintId?: string;
   sprintName?: string;
   checklist?: { id: string; text: string; completed: boolean }[];
@@ -78,6 +82,9 @@ export interface Stakeholder {
   power: "High" | "Low";
   interest: "High" | "Low";
   engagement: "Unaware" | "Resistant" | "Neutral" | "Supportive" | "Leading";
+  projectId?: string;
+  projectIds?: string[];
+  sprintIds?: string[];
 }
 
 export type RaidCategory = "Risk" | "Assumption" | "Issue" | "Dependency";
@@ -87,6 +94,9 @@ export interface RaidItem {
   category: RaidCategory;
   title: string;
   description: string;
+  projectId?: string;
+  sprintId?: string;
+  wbsItemId?: string;
   // Risk attributes
   probability?: 1 | 2 | 3 | 4 | 5; // 1: Very Low, 5: Very High
   impact?: 1 | 2 | 3 | 4 | 5; // 1: Very Low, 5: Very High
@@ -121,6 +131,9 @@ export interface ChangeRequest {
   crNumber: string; // e.g. "CR-001"
   code?: string; // alias for crNumber
   title: string;
+  projectId?: string;
+  sprintId?: string;
+  wbsItemId?: string;
   requestedBy?: string;
   requestorId?: string;
   dateSubmitted?: string;
@@ -182,8 +195,13 @@ export interface ProjectSettings {
   startDate: string;
   targetEndDate: string;
   baselineBudget: number;
-  status: "Active" | "At Risk" | "Critical" | "Completed";
+  authorizedBudget?: number;
+  status: "Active" | "At Risk" | "Critical" | "Completed" | "Planning";
+  color?: string;
+  description?: string;
 }
+
+export type Project = ProjectSettings;
 
 export type ActiveTab =
   | "dashboard"

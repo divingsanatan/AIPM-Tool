@@ -1242,7 +1242,7 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
 
                 {isGroupOpen && (
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs text-[#E2E8F0] border-collapse">
+                    <table className="w-full text-left text-xs text-[#E2E8F0] border-collapse min-w-[620px]">
                       {/* 4B. Table Header */}
                       <thead>
                         <tr className="border-b border-[#1E293B]/70 text-[11px] text-slate-400 font-medium">

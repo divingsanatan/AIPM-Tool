@@ -9,6 +9,8 @@ import {
   ActiveTab,
   ProjectSettings,
   StatusConfig,
+  Project,
+  Sprint,
 } from "./types";
 import {
   initialProjectSettings,
@@ -26,6 +28,12 @@ import {
   saveStatusConfigs,
   getProgressForStatus,
 } from "./utils/statusConfig";
+import { loadProjects, saveProjects, loadActiveProjectId, saveActiveProjectId } from "./data/projectsData";
+import { loadSprints, saveSprints } from "./data/sprintsData";
+import { CreateProjectModal } from "./components/CreateProjectModal";
+import { CreateSprintModal } from "./components/CreateSprintModal";
+import { DeleteSprintModal } from "./components/DeleteSprintModal";
+import { DeleteProjectModal } from "./components/DeleteProjectModal";
 import { Sidebar } from "./components/Sidebar";
 import { Navbar } from "./components/Navbar";
 import { DashboardView } from "./components/DashboardView";
@@ -42,6 +50,18 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("dashboard");
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
+  // Multi-Project and Multi-Sprint Architecture
+  const [projects, setProjects] = useState<Project[]>(() => loadProjects());
+  const [sprints, setSprints] = useState<Sprint[]>(() => loadSprints());
+  const [activeProjectId, setActiveProjectId] = useState<string>(() => loadActiveProjectId() || "all");
+  const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState(false);
+  const [projectToEdit, setProjectToEdit] = useState<Project | null>(null);
+  const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
+  const [isCreateSprintModalOpen, setIsCreateSprintModalOpen] = useState(false);
+  const [targetSprintProjectId, setTargetSprintProjectId] = useState<string | undefined>(undefined);
+  const [sprintToEdit, setSprintToEdit] = useState<Sprint | null>(null);
+  const [sprintToDelete, setSprintToDelete] = useState<Sprint | null>(null);
+
   const [projectSettings, setProjectSettings] = useState<ProjectSettings>(initialProjectSettings);
   const [wbsItems, setWbsItems] = useState<WbsItem[]>(() => calculateWbsHierarchyRollups(initialWbsItems, initialStakeholders).rolledUpItems);
   const [stakeholders, setStakeholders] = useState<Stakeholder[]>(initialStakeholders);
@@ -53,18 +73,6 @@ export default function App() {
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Automated WBS Hierarchy Roll-up (PMI 100% Rule, Time, Cost, RACI, Priority, Critical Path)
-  const wbsRollupData = useMemo(() => {
-    return calculateWbsHierarchyRollups(wbsItems, stakeholders);
-  }, [wbsItems, stakeholders]);
-
-  const rolledUpWbsItems = wbsRollupData.rolledUpItems;
-
-  // Dynamic EVM recalculation
-  const evmMetrics = useMemo(() => {
-    return calculateEvmMetrics(rolledUpWbsItems, stakeholders, projectSettings.authorizedBudget);
-  }, [rolledUpWbsItems, stakeholders, projectSettings.authorizedBudget]);
-
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => {
@@ -72,8 +80,433 @@ export default function App() {
     }, 4000);
   };
 
+  // Multi-Project Switching Handlers
+  const [selectedSprintId, setSelectedSprintId] = useState<string | null>(null);
+
+  const handleSelectProject = (projId: string) => {
+    setActiveProjectId(projId);
+    saveActiveProjectId(projId);
+    setSelectedSprintId(null);
+    const selected = projects.find((p) => p.id === projId);
+    if (projId === "all") {
+      showToast("Switched to Workspace View: Viewing all projects & sprints");
+    } else {
+      showToast(`Switched to: ${selected?.name || "Project"} (${selected?.projectCode || ""})`);
+    }
+  };
+
+  const handleSelectSprint = (sprintId: string | null) => {
+    setSelectedSprintId(sprintId);
+    if (sprintId) {
+      const spr = sprints.find((s) => s.id === sprintId);
+      if (spr?.projectId && spr.projectId !== activeProjectId) {
+        setActiveProjectId(spr.projectId);
+        saveActiveProjectId(spr.projectId);
+      }
+      showToast(`Focused Sprint: ${spr?.name || "Sprint"}`);
+    }
+  };
+
+  const handleAddNewProject = (newProj: Project) => {
+    setProjects((prev) => {
+      const next = [newProj, ...prev];
+      saveProjects(next);
+      return next;
+    });
+    setActiveProjectId(newProj.id);
+    saveActiveProjectId(newProj.id);
+    setSelectedSprintId(null);
+    showToast(`Created new project: ${newProj.name}. Active workspace updated.`);
+  };
+
+  const handleOpenEditProject = (project: Project) => {
+    setProjectToEdit(project);
+    setIsCreateProjectModalOpen(true);
+  };
+
+  const handleUpdateProject = (updatedProject: Project) => {
+    const oldProject = projects.find((p) => p.id === updatedProject.id);
+    setProjects((prev) => {
+      const next = prev.map((p) => (p.id === updatedProject.id ? updatedProject : p));
+      saveProjects(next);
+      return next;
+    });
+
+    // If project name changed, sync associated sprints & work items
+    if (oldProject && oldProject.name !== updatedProject.name) {
+      setSprints((prev) => {
+        const next = prev.map((s) =>
+          s.projectId === updatedProject.id || s.projectGroup === oldProject.name
+            ? { ...s, projectGroup: updatedProject.name, projectId: updatedProject.id }
+            : s
+        );
+        saveSprints(next);
+        return next;
+      });
+
+      setWbsItems((prev) => {
+        const updated = prev.map((item) =>
+          item.projectId === updatedProject.id || item.projectName === oldProject.name
+            ? { ...item, projectName: updatedProject.name, projectId: updatedProject.id }
+            : item
+        );
+        return calculateWbsHierarchyRollups(updated, stakeholders).rolledUpItems;
+      });
+    }
+
+    // If currently active, sync projectSettings
+    if (activeProjectId === updatedProject.id) {
+      setProjectSettings((prev) => ({
+        ...prev,
+        name: updatedProject.name,
+        projectCode: updatedProject.projectCode,
+        description: updatedProject.description,
+        projectManager: updatedProject.projectManager,
+        sponsor: updatedProject.sponsor,
+        startDate: updatedProject.startDate,
+        targetEndDate: updatedProject.targetEndDate,
+        baselineBudget: updatedProject.baselineBudget,
+        authorizedBudget: updatedProject.authorizedBudget,
+        status: updatedProject.status,
+        color: updatedProject.color,
+      }));
+    }
+
+    setIsCreateProjectModalOpen(false);
+    setProjectToEdit(null);
+    showToast(`Updated project "${updatedProject.name}" details.`);
+  };
+
+  const handlePromptDeleteProject = (project: Project) => {
+    setProjectToDelete(project);
+  };
+
+  const handleConfirmDeleteProject = (projectId: string) => {
+    const project = projects.find((p) => p.id === projectId);
+    const projectName = project?.name || "Project";
+
+    setProjects((prev) => {
+      const next = prev.filter((p) => p.id !== projectId);
+      saveProjects(next);
+      return next;
+    });
+
+    // Remove or unlink associated sprints
+    setSprints((prev) => {
+      const next = prev.filter((s) => s.projectId !== projectId && s.projectGroup !== projectName);
+      saveSprints(next);
+      return next;
+    });
+
+    // Unlink work items associated with deleted project
+    setWbsItems((prev) => {
+      const updated = prev.map((item) =>
+        item.projectId === projectId || item.projectName === projectName
+          ? { ...item, projectId: undefined, projectName: undefined }
+          : item
+      );
+      return calculateWbsHierarchyRollups(updated, stakeholders).rolledUpItems;
+    });
+
+    // Reset workspace scope if active project is deleted
+    if (activeProjectId === projectId) {
+      setActiveProjectId("all");
+      saveActiveProjectId("all");
+      setSelectedSprintId(null);
+    }
+
+    setProjectToDelete(null);
+    if (projectToEdit?.id === projectId) {
+      setIsCreateProjectModalOpen(false);
+      setProjectToEdit(null);
+    }
+
+    showToast(`Project "${projectName}" and its delivery configuration have been deleted.`);
+  };
+
+  const handleAddNewSprint = (newSprint: Sprint) => {
+    setSprints((prev) => {
+      const next = [newSprint, ...prev];
+      saveSprints(next);
+      return next;
+    });
+    showToast(`Created sprint: ${newSprint.name} (${newSprint.projectGroup || "Project"})`);
+  };
+
+  const handleOpenEditSprint = (sprint: Sprint) => {
+    setSprintToEdit(sprint);
+    setTargetSprintProjectId(sprint.projectId);
+    setIsCreateSprintModalOpen(true);
+  };
+
+  const handleUpdateSprint = (updatedSprint: Sprint) => {
+    setSprints((prev) => {
+      const next = prev.map((s) => (s.id === updatedSprint.id ? updatedSprint : s));
+      saveSprints(next);
+      return next;
+    });
+    // Synchronize associated work items with new sprint and project details
+    setWbsItems((prev) => {
+      const updated = prev.map((item) =>
+        item.sprintId === updatedSprint.id
+          ? {
+              ...item,
+              sprintName: updatedSprint.name,
+              projectId: updatedSprint.projectId,
+              projectName: updatedSprint.projectGroup,
+            }
+          : item
+      );
+      return calculateWbsHierarchyRollups(updated, stakeholders).rolledUpItems;
+    });
+    setIsCreateSprintModalOpen(false);
+    setSprintToEdit(null);
+    showToast(`Updated sprint "${updatedSprint.name}" details.`);
+  };
+
+  const handlePromptDeleteSprint = (sprint: Sprint) => {
+    setSprintToDelete(sprint);
+  };
+
+  const handleConfirmDeleteSprint = (sprintId: string) => {
+    const sprintName = sprints.find((s) => s.id === sprintId)?.name || "Sprint";
+    setSprints((prev) => {
+      const next = prev.filter((s) => s.id !== sprintId);
+      saveSprints(next);
+      return next;
+    });
+    if (selectedSprintId === sprintId) {
+      setSelectedSprintId(null);
+    }
+    // Detach work items from the deleted sprint
+    setWbsItems((prev) => {
+      const updated = prev.map((item) =>
+        item.sprintId === sprintId
+          ? { ...item, sprintId: undefined, sprintName: undefined }
+          : item
+      );
+      return calculateWbsHierarchyRollups(updated, stakeholders).rolledUpItems;
+    });
+    setSprintToDelete(null);
+    if (sprintToEdit?.id === sprintId) {
+      setIsCreateSprintModalOpen(false);
+      setSprintToEdit(null);
+    }
+    showToast(`Sprint "${sprintName}" has been deleted.`);
+  };
+
+  // Filter items by active project and optional selected sprint
+  const filteredWbsItems = useMemo(() => {
+    let items = wbsItems;
+    if (activeProjectId !== "all") {
+      items = items.filter((item) => {
+        if (item.projectId) return item.projectId === activeProjectId;
+        if (item.sprintId) {
+          const itemSprint = sprints.find((s) => s.id === item.sprintId);
+          if (itemSprint?.projectId) return itemSprint.projectId === activeProjectId;
+        }
+        // Default initial items to Flutter Project
+        return activeProjectId === "proj-flutter";
+      });
+    }
+    if (selectedSprintId) {
+      items = items.filter((item) => item.sprintId === selectedSprintId);
+    }
+    return items;
+  }, [wbsItems, activeProjectId, selectedSprintId, sprints]);
+
+  // Automated WBS Hierarchy Roll-up (PMI 100% Rule, Time, Cost, RACI, Priority, Critical Path)
+  const wbsRollupData = useMemo(() => {
+    return calculateWbsHierarchyRollups(filteredWbsItems, stakeholders);
+  }, [filteredWbsItems, stakeholders]);
+
+  const rolledUpWbsItems = wbsRollupData.rolledUpItems;
+
+  const filteredRaidItems = useMemo(() => {
+    let items = raidItems;
+    if (activeProjectId !== "all") {
+      items = items.filter((r) => {
+        if (r.projectId) return r.projectId === activeProjectId;
+        if (r.sprintId) {
+          const itemSprint = sprints.find((s) => s.id === r.sprintId);
+          if (itemSprint?.projectId) return itemSprint.projectId === activeProjectId;
+        }
+        return activeProjectId === "proj-flutter";
+      });
+    }
+    if (selectedSprintId) {
+      items = items.filter((r) => {
+        if (r.sprintId) return r.sprintId === selectedSprintId;
+        if (r.wbsItemId) {
+          const wbs = wbsItems.find((w) => w.id === r.wbsItemId);
+          if (wbs?.sprintId) return wbs.sprintId === selectedSprintId;
+        }
+        return false;
+      });
+    }
+    return items;
+  }, [raidItems, activeProjectId, selectedSprintId, sprints, wbsItems]);
+
+  const filteredStakeholders = useMemo(() => {
+    if (activeProjectId === "all" && !selectedSprintId) {
+      return stakeholders;
+    }
+
+    return stakeholders.filter((s) => {
+      // 1. If sprint is selected:
+      if (selectedSprintId) {
+        if (s.sprintIds?.includes(selectedSprintId)) return true;
+        const assignedInSprint = filteredWbsItems.some(
+          (w) =>
+            w.assignedStakeholderId === s.id ||
+            w.assignedStakeholderIds?.includes(s.id) ||
+            w.contributorStakeholderIds?.includes(s.id)
+        );
+        if (assignedInSprint) return true;
+        const ownsRaidInSprint = filteredRaidItems.some((r) => r.ownerId === s.id);
+        if (ownsRaidInSprint) return true;
+        const hasRaciInSprint = raciEntries.some(
+          (entry) =>
+            filteredWbsItems.some((w) => w.id === entry.wbsItemId) &&
+            Boolean(entry.assignments[s.id])
+        );
+        if (hasRaciInSprint) return true;
+        return false;
+      }
+
+      // 2. If project is selected (no sprint specified):
+      if (activeProjectId !== "all") {
+        if (s.projectId === activeProjectId || s.projectIds?.includes(activeProjectId)) {
+          return true;
+        }
+        const assignedInProject = filteredWbsItems.some(
+          (w) =>
+            w.assignedStakeholderId === s.id ||
+            w.assignedStakeholderIds?.includes(s.id) ||
+            w.contributorStakeholderIds?.includes(s.id)
+        );
+        if (assignedInProject) return true;
+        const ownsRaidInProject = filteredRaidItems.some((r) => r.ownerId === s.id);
+        if (ownsRaidInProject) return true;
+        if (activeProjectId === "proj-flutter" && (s.id === "stk-1" || s.id === "stk-2" || s.id === "stk-4" || s.id === "stk-5" || s.id === "stk-6")) {
+          return true;
+        }
+        return false;
+      }
+
+      return true;
+    });
+  }, [stakeholders, activeProjectId, selectedSprintId, filteredWbsItems, filteredRaidItems, raciEntries]);
+
+  const filteredChangeRequests = useMemo(() => {
+    let items = changeRequests;
+    if (activeProjectId !== "all") {
+      items = items.filter((cr) => {
+        if (cr.projectId) return cr.projectId === activeProjectId;
+        if (cr.sprintId) {
+          const itemSprint = sprints.find((s) => s.id === cr.sprintId);
+          if (itemSprint?.projectId) return itemSprint.projectId === activeProjectId;
+        }
+        return activeProjectId === "proj-flutter";
+      });
+    }
+    if (selectedSprintId) {
+      items = items.filter((cr) => cr.sprintId === selectedSprintId);
+    }
+    return items;
+  }, [changeRequests, activeProjectId, selectedSprintId, sprints]);
+
+  const filteredSprints = useMemo(() => {
+    if (activeProjectId === "all") return sprints;
+    return sprints.filter((s) => s.projectId === activeProjectId);
+  }, [sprints, activeProjectId]);
+
+  const activeProject = useMemo(() => {
+    if (activeProjectId === "all") return null;
+    return projects.find((p) => p.id === activeProjectId) || null;
+  }, [projects, activeProjectId]);
+
+  const effectiveBudget = activeProject ? activeProject.authorizedBudget : projectSettings.authorizedBudget;
+
+  // Dynamic EVM recalculation
+  const evmMetrics = useMemo(() => {
+    return calculateEvmMetrics(rolledUpWbsItems, stakeholders, effectiveBudget);
+  }, [rolledUpWbsItems, stakeholders, effectiveBudget]);
+
+  // Project-level items: Aggregates ALL sprints for activeProjectId or entire workspace
+  // Ensures the Dashboard always adds up all sprints together when viewing a project
+  const projectScopedWbsItems = useMemo(() => {
+    let items = wbsItems;
+    if (activeProjectId !== "all") {
+      items = items.filter((item) => {
+        if (item.projectId) return item.projectId === activeProjectId;
+        if (item.sprintId) {
+          const itemSprint = sprints.find((s) => s.id === item.sprintId);
+          if (itemSprint?.projectId) return itemSprint.projectId === activeProjectId;
+        }
+        return activeProjectId === "proj-flutter";
+      });
+    }
+    return items;
+  }, [wbsItems, activeProjectId, sprints]);
+
+  const projectScopedRolledUpWbsItems = useMemo(() => {
+    return calculateWbsHierarchyRollups(projectScopedWbsItems, stakeholders).rolledUpItems;
+  }, [projectScopedWbsItems, stakeholders]);
+
+  const projectScopedEvmMetrics = useMemo(() => {
+    return calculateEvmMetrics(projectScopedRolledUpWbsItems, stakeholders, effectiveBudget);
+  }, [projectScopedRolledUpWbsItems, stakeholders, effectiveBudget]);
+
+  const projectScopedRaidItems = useMemo(() => {
+    let items = raidItems;
+    if (activeProjectId !== "all") {
+      items = items.filter((r) => {
+        if (r.projectId) return r.projectId === activeProjectId;
+        if (r.sprintId) {
+          const itemSprint = sprints.find((s) => s.id === r.sprintId);
+          if (itemSprint?.projectId) return itemSprint.projectId === activeProjectId;
+        }
+        return activeProjectId === "proj-flutter";
+      });
+    }
+    return items;
+  }, [raidItems, activeProjectId, sprints]);
+
+  const projectScopedStakeholders = useMemo(() => {
+    if (activeProjectId === "all") return stakeholders;
+    return stakeholders.filter((s) => {
+      if (s.projectId === activeProjectId || s.projectIds?.includes(activeProjectId)) return true;
+      const assignedInProject = projectScopedWbsItems.some(
+        (w) =>
+          w.assignedStakeholderId === s.id ||
+          w.assignedStakeholderIds?.includes(s.id) ||
+          w.contributorStakeholderIds?.includes(s.id)
+      );
+      if (assignedInProject) return true;
+      const ownsRaid = projectScopedRaidItems.some((r) => r.ownerId === s.id);
+      if (ownsRaid) return true;
+      return activeProjectId === "proj-flutter";
+    });
+  }, [stakeholders, activeProjectId, projectScopedWbsItems, projectScopedRaidItems]);
+
+  const projectScopedChangeRequests = useMemo(() => {
+    let items = changeRequests;
+    if (activeProjectId !== "all") {
+      items = items.filter((cr) => {
+        if (cr.projectId) return cr.projectId === activeProjectId;
+        if (cr.sprintId) {
+          const itemSprint = sprints.find((s) => s.id === cr.sprintId);
+          if (itemSprint?.projectId) return itemSprint.projectId === activeProjectId;
+        }
+        return activeProjectId === "proj-flutter";
+      });
+    }
+    return items;
+  }, [changeRequests, activeProjectId, sprints]);
+
   // High Density counts for badges
-  const criticalRisksCount = raidItems.filter(
+  const criticalRisksCount = filteredRaidItems.filter(
     (r) => r.category === "Risk" && (r.riskExposure || 0) >= 15 && r.status !== "Closed"
   ).length;
 
@@ -84,8 +517,15 @@ export default function App() {
 
   // WBS CRUD - Intelligently recalculates and updates higher hierarchy across epics/milestones
   const handleAddWbsItem = (item: WbsItem) => {
+    const itemWithProject: WbsItem = {
+      ...item,
+      projectId: item.projectId || (activeProjectId !== "all" ? activeProjectId : "proj-flutter"),
+      projectName:
+        item.projectName ||
+        projects.find((p) => p.id === (item.projectId || (activeProjectId !== "all" ? activeProjectId : "proj-flutter")))?.name,
+    };
     setWbsItems((prev) => {
-      const next = [...prev, item];
+      const next = [...prev, itemWithProject];
       return calculateWbsHierarchyRollups(next, stakeholders).rolledUpItems;
     });
     showToast(`Added work item ${item.wbsCode}: Time and cost rolled up the hierarchy.`);
@@ -313,12 +753,32 @@ export default function App() {
         </div>
       )}
 
-      {/* Left High Density Sidebar */}
+      {/* Left ClickUp Style Dual Dock and Hierarchy Sidebar */}
       <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        projectSettings={projectSettings}
-        evmMetrics={evmMetrics}
+        projects={projects}
+        sprints={sprints}
+        activeProjectId={activeProjectId}
+        selectedSprintId={selectedSprintId}
+        onSelectProject={handleSelectProject}
+        onSelectSprint={handleSelectSprint}
+        onOpenCreateProject={() => setIsCreateProjectModalOpen(true)}
+        onOpenCreateSprint={(projId) => {
+          setSprintToEdit(null);
+          setTargetSprintProjectId(projId || (activeProjectId !== "all" ? activeProjectId : projects[0]?.id));
+          setIsCreateSprintModalOpen(true);
+        }}
+        onOpenEditSprint={handleOpenEditSprint}
+        onDeleteSprint={handlePromptDeleteSprint}
+        onOpenEditProject={handleOpenEditProject}
+        onDeleteProject={handlePromptDeleteProject}
+        onOpenCreateWorkItem={() => {
+          setActiveTab("wbs");
+        }}
+        onOpenAiAssistant={() => {
+          setActiveTab("documents");
+        }}
         criticalRisksCount={criticalRisksCount}
         blockedWbsCount={blockedWbsCount}
         pendingCrCount={pendingCrCount}
@@ -338,29 +798,54 @@ export default function App() {
           projectContextData={projectContextData}
           onOpenMobileSidebar={() => setIsMobileSidebarOpen(true)}
           onUploadDocsClick={() => setActiveTab("documents")}
+          projects={projects}
+          sprints={sprints}
+          activeProjectId={activeProjectId}
+          onSelectProject={handleSelectProject}
+          onOpenCreateProject={() => {
+            setProjectToEdit(null);
+            setIsCreateProjectModalOpen(true);
+          }}
+          onOpenCreateSprint={(projId) => {
+            setSprintToEdit(null);
+            setTargetSprintProjectId(projId || (activeProjectId !== "all" ? activeProjectId : projects[0]?.id));
+            setIsCreateSprintModalOpen(true);
+          }}
+          onOpenEditProject={handleOpenEditProject}
+          onPromptDeleteProject={handlePromptDeleteProject}
         />
 
         {/* Scrollable Viewport */}
         <div className="flex-1 overflow-y-auto min-w-0 p-3 sm:p-5 md:p-6 space-y-6">
           {activeTab === "dashboard" && (
             <DashboardView
-              wbsItems={wbsItems}
-              stakeholders={stakeholders}
-              raidItems={raidItems}
-              changeRequests={changeRequests}
-              evmMetrics={evmMetrics}
+              wbsItems={projectScopedWbsItems}
+              stakeholders={projectScopedStakeholders}
+              raidItems={projectScopedRaidItems}
+              changeRequests={projectScopedChangeRequests}
+              evmMetrics={projectScopedEvmMetrics}
               statusConfigs={statusConfigs}
               onNavigateTab={setActiveTab}
               onGenerateReportClick={(type) => {
                 setActiveTab("reports");
               }}
+              projects={projects}
+              sprints={sprints}
+              activeProjectId={activeProjectId}
+              selectedSprintId={selectedSprintId}
+              onSelectProject={handleSelectProject}
+              onSelectSprint={handleSelectSprint}
+              onOpenEditSprint={handleOpenEditSprint}
+              onDeleteSprint={handlePromptDeleteSprint}
+              onOpenEditProject={handleOpenEditProject}
+              onDeleteProject={handlePromptDeleteProject}
             />
           )}
 
           {activeTab === "wbs" && (
             <WbsView
-              wbsItems={wbsItems}
-              stakeholders={stakeholders}
+              wbsItems={filteredWbsItems}
+              stakeholders={filteredStakeholders}
               documents={documents}
               onAddWbsItem={handleAddWbsItem}
               onUpdateWbsItem={handleUpdateWbsItem}
@@ -370,36 +855,51 @@ export default function App() {
               onUpdateStatusConfigs={handleUpdateStatusConfigs}
               onSyncAllTasks={handleSyncAllTasksWithStatusProgress}
               onApplyStatusProgressToTasks={handleApplyStatusProgressToTasks}
+              projects={projects}
+              sprints={filteredSprints}
+              activeProjectId={activeProjectId}
+              selectedSprintId={selectedSprintId}
+              onAddNewProject={handleAddNewProject}
+              onAddNewSprint={handleAddNewSprint}
+              onSelectProject={handleSelectProject}
+              onSelectSprint={handleSelectSprint}
             />
           )}
 
           {activeTab === "stakeholders" && (
             <StakeholdersView
-              stakeholders={stakeholders}
-              wbsItems={wbsItems}
+              stakeholders={filteredStakeholders}
+              wbsItems={filteredWbsItems}
               evmMetrics={evmMetrics}
               onAddStakeholder={handleAddStakeholder}
               onUpdateStakeholder={handleUpdateStakeholder}
               onDeleteStakeholder={handleDeleteStakeholder}
+              activeProject={activeProject}
+              selectedSprint={sprints.find((s) => s.id === selectedSprintId) || null}
+              onClearSprint={() => handleSelectSprint(null)}
+              totalOrgCount={stakeholders.length}
             />
           )}
 
           {activeTab === "raid" && (
             <RaidView
-              raidItems={raidItems}
-              stakeholders={stakeholders}
+              raidItems={filteredRaidItems}
+              stakeholders={filteredStakeholders}
               evmMetrics={evmMetrics}
               onAddRaidItem={handleAddRaidItem}
               onUpdateRaidItem={handleUpdateRaidItem}
               onDeleteRaidItem={handleDeleteRaidItem}
               onRequestRiskReport={() => setActiveTab("reports")}
+              activeProject={activeProject}
+              selectedSprint={sprints.find((s) => s.id === selectedSprintId) || null}
+              onClearSprint={() => handleSelectSprint(null)}
             />
           )}
 
           {activeTab === "raci" && (
             <RaciView
-              wbsItems={wbsItems}
-              stakeholders={stakeholders}
+              wbsItems={filteredWbsItems}
+              stakeholders={filteredStakeholders}
               raciEntries={raciEntries}
               onUpdateRaciEntry={handleUpdateRaciEntry}
             />
@@ -407,8 +907,14 @@ export default function App() {
 
           {activeTab === "change-management" && (
             <ChangeManagementView
-              changeRequests={changeRequests}
-              stakeholders={stakeholders}
+              changeRequests={filteredChangeRequests}
+              stakeholders={filteredStakeholders}
+              sprints={sprints}
+              wbsItems={filteredWbsItems}
+              projects={projects}
+              activeProjectId={activeProjectId}
+              selectedSprintId={selectedSprintId}
+              onSelectSprint={setSelectedSprintId}
               onAddChangeRequest={handleAddChangeRequest}
               onUpdateChangeRequest={handleUpdateChangeRequest}
               onDeleteChangeRequest={handleDeleteChangeRequest}
@@ -426,10 +932,10 @@ export default function App() {
 
           {activeTab === "reports" && (
             <ReportsView
-              wbsItems={wbsItems}
-              raidItems={raidItems}
-              stakeholders={stakeholders}
-              changeRequests={changeRequests}
+              wbsItems={filteredWbsItems}
+              raidItems={filteredRaidItems}
+              stakeholders={filteredStakeholders}
+              changeRequests={filteredChangeRequests}
               evmMetrics={evmMetrics}
             />
           )}
@@ -443,15 +949,83 @@ export default function App() {
               PMI Core Online
             </span>
             <span>•</span>
-            <span className="text-slate-300">Live Governance Sync: Active</span>
+            <span className="text-slate-300">
+              Project Context: {activeProject ? `${activeProject.name} (${activeProject.projectCode})` : "All Projects"}
+            </span>
             <span>•</span>
             <span className="hidden sm:inline text-slate-400">Standard: PMBOK v7 / ANSI 99-001-2021</span>
           </div>
           <div className="flex items-center space-x-3 shrink-0">
-            <span className="text-[#38BDF8] font-bold uppercase tracking-wider">Telemetry Nominal</span>
+            <span className="text-[#38BDF8] font-bold uppercase tracking-wider">
+              {filteredSprints.length} Sprints • {filteredWbsItems.length} Work Items
+            </span>
           </div>
         </footer>
       </main>
+
+      {/* Global Project Creation & Edit Modal */}
+      {isCreateProjectModalOpen && (
+        <CreateProjectModal
+          isOpen={isCreateProjectModalOpen}
+          onClose={() => {
+            setIsCreateProjectModalOpen(false);
+            setProjectToEdit(null);
+          }}
+          onSubmit={handleAddNewProject}
+          onUpdateProject={handleUpdateProject}
+          onDeleteProject={(proj) => {
+            setIsCreateProjectModalOpen(false);
+            setProjectToEdit(null);
+            setProjectToDelete(proj);
+          }}
+          projectToEdit={projectToEdit}
+          stakeholders={stakeholders}
+        />
+      )}
+
+      {/* Global Project Delete Confirmation Modal */}
+      {projectToDelete && (
+        <DeleteProjectModal
+          isOpen={!!projectToDelete}
+          project={projectToDelete}
+          onClose={() => setProjectToDelete(null)}
+          onConfirmDelete={handleConfirmDeleteProject}
+          associatedSprintsCount={sprints.filter((s) => s.projectId === projectToDelete.id || s.projectGroup === projectToDelete.name).length}
+          associatedWbsCount={wbsItems.filter((w) => w.projectId === projectToDelete.id || w.projectName === projectToDelete.name).length}
+        />
+      )}
+
+      {/* Global Sprint Creation & Edit Modal */}
+      {isCreateSprintModalOpen && (
+        <CreateSprintModal
+          isOpen={isCreateSprintModalOpen}
+          onClose={() => {
+            setIsCreateSprintModalOpen(false);
+            setSprintToEdit(null);
+          }}
+          onSubmit={handleAddNewSprint}
+          onUpdateSprint={handleUpdateSprint}
+          onDeleteSprint={(sprint) => {
+            setIsCreateSprintModalOpen(false);
+            setSprintToEdit(null);
+            setSprintToDelete(sprint);
+          }}
+          sprintToEdit={sprintToEdit}
+          projects={projects}
+          defaultProjectId={targetSprintProjectId}
+        />
+      )}
+
+      {/* Global Sprint Delete Confirmation Modal */}
+      {sprintToDelete && (
+        <DeleteSprintModal
+          isOpen={!!sprintToDelete}
+          sprint={sprintToDelete}
+          onClose={() => setSprintToDelete(null)}
+          onConfirmDelete={handleConfirmDeleteSprint}
+          associatedWbsCount={wbsItems.filter((w) => w.sprintId === sprintToDelete.id).length}
+        />
+      )}
     </div>
   );
 }

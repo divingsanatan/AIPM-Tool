@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Stakeholder, WbsItem, EvmMetrics } from "../types";
+import { Stakeholder, WbsItem, EvmMetrics, Project, Sprint } from "../types";
 import {
   Users,
   Plus,
@@ -23,6 +23,10 @@ interface StakeholdersViewProps {
   onAddStakeholder: (stakeholder: Stakeholder) => void;
   onUpdateStakeholder: (stakeholder: Stakeholder) => void;
   onDeleteStakeholder: (id: string) => void;
+  activeProject?: Project | null;
+  selectedSprint?: Sprint | null;
+  onClearSprint?: () => void;
+  totalOrgCount?: number;
 }
 
 export const StakeholdersView: React.FC<StakeholdersViewProps> = ({
@@ -32,6 +36,10 @@ export const StakeholdersView: React.FC<StakeholdersViewProps> = ({
   onAddStakeholder,
   onUpdateStakeholder,
   onDeleteStakeholder,
+  activeProject,
+  selectedSprint,
+  onClearSprint,
+  totalOrgCount,
 }) => {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingStakeholder, setEditingStakeholder] = useState<Stakeholder | null>(null);
@@ -65,6 +73,9 @@ export const StakeholdersView: React.FC<StakeholdersViewProps> = ({
       power: (formData.power as "High" | "Low") || "High",
       interest: (formData.interest as "High" | "Low") || "High",
       engagement: (formData.engagement as any) || "Supportive",
+      projectId: activeProject?.id,
+      projectIds: activeProject ? [activeProject.id] : undefined,
+      sprintIds: selectedSprint ? [selectedSprint.id] : undefined,
     };
 
     onAddStakeholder(newStk);
@@ -119,6 +130,43 @@ export const StakeholdersView: React.FC<StakeholdersViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Active Scope Information Bar */}
+      {activeProject && (
+        <div className="bg-[#0D1527] border border-[#1E2E50] rounded-xl p-3 sm:p-4 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2">
+            <div className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-sky-500"></span>
+            </div>
+            <span className="text-slate-300 font-medium">
+              Filtered Scope:{" "}
+              <strong className="text-white">{activeProject.name}</strong>
+              {selectedSprint && (
+                <>
+                  {" › "}
+                  <span className="text-emerald-300 font-semibold">{selectedSprint.name}</span>
+                </>
+              )}
+            </span>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30">
+              {stakeholders.length} Stakeholder{stakeholders.length === 1 ? "" : "s"} Assigned
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 text-[11px]">
+            {selectedSprint && onClearSprint && (
+              <button
+                type="button"
+                onClick={onClearSprint}
+                className="px-2.5 py-1 rounded bg-[#162340] hover:bg-[#1E3058] text-slate-300 hover:text-white border border-[#253966] transition-colors cursor-pointer"
+              >
+                View all {activeProject.name} Team Members
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Financial KPIs Banner */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 font-mono">
@@ -189,17 +237,17 @@ export const StakeholdersView: React.FC<StakeholdersViewProps> = ({
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-[#E2E8F0]">
+          <table className="w-full text-left text-xs text-[#E2E8F0] min-w-[820px]">
             <thead className="bg-[#060911] border-b border-[#1E293B] uppercase text-[10px] font-bold text-slate-400 tracking-wider font-mono">
               <tr>
-                <th className="py-3.5 pl-5 pr-3">Stakeholder Name</th>
-                <th className="py-3.5 px-3">Role & Department</th>
-                <th className="py-3.5 px-3">Hourly Rate ($/hr)</th>
-                <th className="py-3.5 px-3">Assigned Tasks</th>
-                <th className="py-3.5 px-3">Actual Cost (AC)</th>
-                <th className="py-3.5 px-3">Power / Interest</th>
-                <th className="py-3.5 px-3">Engagement Level</th>
-                <th className="py-3.5 pr-5 pl-3 text-right">Actions</th>
+                <th className="py-3.5 pl-5 pr-3 min-w-[180px]">Stakeholder Name</th>
+                <th className="py-3.5 px-3 min-w-[150px]">Role & Department</th>
+                <th className="py-3.5 px-3 whitespace-nowrap">Hourly Rate ($/hr)</th>
+                <th className="py-3.5 px-3 whitespace-nowrap">Assigned Tasks</th>
+                <th className="py-3.5 px-3 whitespace-nowrap">Actual Cost (AC)</th>
+                <th className="py-3.5 px-3 whitespace-nowrap">Power / Interest</th>
+                <th className="py-3.5 px-3 whitespace-nowrap">Engagement Level</th>
+                <th className="py-3.5 pr-5 pl-3 text-right whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#1E293B]/70">

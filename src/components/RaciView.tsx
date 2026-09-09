@@ -193,29 +193,30 @@ export const RaciView: React.FC<RaciViewProps> = ({
           </div>
 
           {/* Quick Legend */}
-          <div className="flex items-center gap-2 flex-wrap text-[10px] font-mono">
-            <span className="px-2 py-0.5 rounded bg-purple-600 text-white font-bold shadow-xs">
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap text-[10px] font-mono">
+            <span className="px-2 py-0.5 rounded bg-purple-600 text-white font-bold shadow-xs whitespace-nowrap">
               A: Accountable
             </span>
-            <span className="px-2 py-0.5 rounded bg-blue-600 text-white font-bold shadow-xs">
+            <span className="px-2 py-0.5 rounded bg-blue-600 text-white font-bold shadow-xs whitespace-nowrap">
               R: Responsible
             </span>
-            <span className="px-2 py-0.5 rounded bg-emerald-700 text-emerald-100 font-bold shadow-xs">
+            <span className="px-2 py-0.5 rounded bg-emerald-700 text-emerald-100 font-bold shadow-xs whitespace-nowrap">
               C: Consulted
             </span>
-            <span className="px-2 py-0.5 rounded bg-slate-700 text-slate-300 font-bold shadow-xs">
+            <span className="px-2 py-0.5 rounded bg-slate-700 text-slate-300 font-bold shadow-xs whitespace-nowrap">
               I: Informed
             </span>
-            <span className="px-2 py-0.5 rounded bg-slate-850 text-sky-400 border border-sky-400/40 font-bold flex items-center gap-1">
+            <span className="px-2 py-0.5 rounded bg-slate-850 text-sky-400 border border-sky-400/40 font-bold flex items-center gap-1 whitespace-nowrap">
               <ArrowUpRight className="h-2.5 w-2.5" /> Rolled Up
             </span>
           </div>
         </div>
 
         {/* Audit & Metrics Toolbar */}
-        <div className="mt-4 pt-4 border-t border-[#1E293B] flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="mt-4 pt-4 border-t border-[#1E293B] space-y-3">
+          {/* Audit Banner Card */}
           <div
-            className={`p-3 rounded-lg text-xs flex flex-col sm:flex-row items-start sm:items-center gap-3 flex-1 ${
+            className={`p-3 sm:p-3.5 rounded-lg text-xs flex flex-col lg:flex-row lg:items-center justify-between gap-3 ${
               isPmiCompliant
                 ? "bg-emerald-950/30 text-emerald-300 border border-emerald-800/40"
                 : "bg-amber-950/30 text-amber-300 border border-amber-800/40"
@@ -227,35 +228,42 @@ export const RaciView: React.FC<RaciViewProps> = ({
               ) : (
                 <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
               )}
-              <span className="font-semibold">
+              <span className="font-semibold whitespace-nowrap">
                 PMI Audit: {isPmiCompliant ? "Fully Compliant" : "Validation Warnings Detected"}
               </span>
             </div>
 
-            <div className="flex items-center gap-3 text-[10px] font-mono flex-wrap">
-              <span className="px-2 py-0.5 rounded bg-black/30 border border-white/10 text-slate-300">
+            <div className="flex items-center gap-2 text-[10px] font-mono flex-wrap">
+              <span className="px-2 py-1 rounded bg-black/40 border border-white/10 text-slate-300 whitespace-nowrap">
                 Direct: <strong>{totalDirectRoles}</strong>
               </span>
-              <span className="px-2 py-0.5 rounded bg-[#38BDF8]/10 text-[#38BDF8] border border-[#38BDF8]/30">
+              <span className="px-2 py-1 rounded bg-[#38BDF8]/10 text-[#38BDF8] border border-[#38BDF8]/30 whitespace-nowrap">
                 Rolled Up from Subtasks: <strong>{totalInheritedRoles}</strong>
               </span>
               {itemsWithZeroA > 0 && (
-                <span className="text-rose-400 font-bold">Missing 'A': {itemsWithZeroA}</span>
+                <span className="px-2 py-1 rounded bg-rose-950/50 text-rose-300 border border-rose-800/50 font-bold whitespace-nowrap">
+                  Missing 'A': {itemsWithZeroA}
+                </span>
               )}
               {itemsWithMultipleA > 0 && (
-                <span className="text-amber-400 font-bold">Multiple 'A': {itemsWithMultipleA}</span>
+                <span className="px-2 py-1 rounded bg-amber-950/50 text-amber-300 border border-amber-800/50 font-bold whitespace-nowrap">
+                  Multiple 'A': {itemsWithMultipleA}
+                </span>
               )}
               {itemsWithZeroR > 0 && (
-                <span className="text-amber-400 font-bold">Missing 'R': {itemsWithZeroR}</span>
+                <span className="px-2 py-1 rounded bg-amber-950/50 text-amber-300 border border-amber-800/50 font-bold whitespace-nowrap">
+                  Missing 'R': {itemsWithZeroR}
+                </span>
               )}
             </div>
           </div>
 
           {/* Controls: Filter & Time/Cost Toggle */}
-          <div className="flex items-center gap-2 self-stretch md:self-auto justify-end">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
             <button
+              type="button"
               onClick={() => setShowTimeAndCost((prev) => !prev)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium border flex items-center gap-1.5 transition-colors cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium border flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 self-start sm:self-auto ${
                 showTimeAndCost
                   ? "bg-[#38BDF8]/15 text-[#38BDF8] border-[#38BDF8]/30"
                   : "bg-[#0E1526] text-slate-400 border-[#1E293B] hover:text-slate-200"
@@ -265,10 +273,11 @@ export const RaciView: React.FC<RaciViewProps> = ({
               <span>Time & Cost Values</span>
             </button>
 
-            <div className="flex items-center bg-[#0E1526] border border-[#1E293B] rounded-lg p-0.5 text-xs">
+            <div className="flex items-center bg-[#0E1526] border border-[#1E293B] rounded-lg p-0.5 text-xs overflow-x-auto max-w-full">
               <button
+                type="button"
                 onClick={() => setFilterView("ALL")}
-                className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer whitespace-nowrap ${
                   filterView === "ALL"
                     ? "bg-[#1E293B] text-white font-bold"
                     : "text-slate-400 hover:text-slate-200"
@@ -277,8 +286,9 @@ export const RaciView: React.FC<RaciViewProps> = ({
                 All ({wbsItems.length})
               </button>
               <button
+                type="button"
                 onClick={() => setFilterView("SUMMARY")}
-                className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer whitespace-nowrap ${
                   filterView === "SUMMARY"
                     ? "bg-[#1E293B] text-white font-bold"
                     : "text-slate-400 hover:text-slate-200"
@@ -287,8 +297,9 @@ export const RaciView: React.FC<RaciViewProps> = ({
                 Deliverables
               </button>
               <button
+                type="button"
                 onClick={() => setFilterView("LEAF")}
-                className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer whitespace-nowrap ${
                   filterView === "LEAF"
                     ? "bg-[#1E293B] text-white font-bold"
                     : "text-slate-400 hover:text-slate-200"
@@ -298,8 +309,9 @@ export const RaciView: React.FC<RaciViewProps> = ({
               </button>
               {itemsWithZeroA + itemsWithMultipleA + itemsWithZeroR > 0 && (
                 <button
+                  type="button"
                   onClick={() => setFilterView("WARNINGS")}
-                  className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                  className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer whitespace-nowrap ${
                     filterView === "WARNINGS"
                       ? "bg-amber-950/60 text-amber-300 font-bold border border-amber-800/40"
                       : "text-amber-400/80 hover:text-amber-300"
