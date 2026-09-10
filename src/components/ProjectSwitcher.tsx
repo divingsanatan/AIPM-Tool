@@ -12,6 +12,7 @@ import {
   Sparkles,
   Pencil,
   Trash2,
+  Cloud,
 } from "lucide-react";
 
 interface ProjectSwitcherProps {
@@ -23,6 +24,7 @@ interface ProjectSwitcherProps {
   onOpenCreateSprint: (defaultProjectId?: string) => void;
   onOpenEditProject?: (project: Project) => void;
   onPromptDeleteProject?: (project: Project) => void;
+  onOpenSyncModal?: () => void;
 }
 
 export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({
@@ -34,6 +36,7 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({
   onOpenCreateSprint,
   onOpenEditProject,
   onPromptDeleteProject,
+  onOpenSyncModal,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -69,7 +72,7 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({
         id="project-switcher-trigger"
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#0F1422] hover:bg-[#161D30] border border-[#232C42] hover:border-[#333E5D] text-slate-200 transition-all cursor-pointer text-xs font-medium max-w-[240px] sm:max-w-xs shadow-xs"
+        className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-lg bg-[#0F1422] hover:bg-[#161D30] border border-[#232C42] hover:border-[#333E5D] text-slate-200 transition-all cursor-pointer text-xs font-medium max-w-[130px] xs:max-w-[160px] sm:max-w-[220px] md:max-w-xs shadow-xs shrink-0"
         title="Switch Workspace Project"
       >
         <span className="flex items-center gap-1.5 shrink-0">
@@ -86,7 +89,7 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({
           {activeProjectId === "all" ? "All Projects" : activeProject?.name || "Select Project"}
         </span>
         {activeProjectId !== "all" && activeProject && (
-          <span className="text-[10px] text-slate-400 font-mono hidden sm:inline shrink-0">
+          <span className="text-[10px] text-slate-400 font-mono hidden md:inline shrink-0">
             {activeProject.projectCode}
           </span>
         )}
@@ -95,9 +98,9 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({
 
       {/* ClickUp-Style Dropdown Menu */}
       {isOpen && (
-        <div className="absolute left-0 top-full mt-1.5 w-80 sm:w-88 bg-[#0D111A] border border-[#232A3B] rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+        <div className="absolute left-0 top-full mt-1.5 w-72 xs:w-80 sm:w-88 max-w-[calc(100vw-20px)] bg-[#0D111A] border border-[#232A3B] rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
           {/* Search Header */}
-          <div className="p-2.5 border-b border-[#1E2433] bg-[#0A0D15]">
+          <div className="p-2.5 border-b border-[#1E2433] bg-[#0A0D15] space-y-2">
             <div className="relative flex items-center">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5" />
               <input
@@ -109,6 +112,26 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({
                 autoFocus
               />
             </div>
+
+            {/* Quick Mobile Sync Shortcut inside dropdown */}
+            {onOpenSyncModal && (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsOpen(false);
+                  onOpenSyncModal();
+                }}
+                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-sky-300 text-xs font-semibold cursor-pointer transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <Cloud className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Sync Devices (Phone & Cloud)</span>
+                </div>
+                <span className="text-[10px] bg-sky-500/20 text-sky-300 px-1.5 py-0.5 rounded font-mono">
+                  Sync
+                </span>
+              </button>
+            )}
           </div>
 
           {/* Projects List */}

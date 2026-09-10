@@ -39,7 +39,6 @@ import {
   getWbsTypeFriendlyName,
   getCompactNomenclature,
   getItemAssignees,
-  isAssignedToHierarchy,
 } from "../utils/wbsRollup";
 import { getItemPriority } from "../utils/filterUtils";
 import {
@@ -209,19 +208,13 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
     return leafItems.filter((i) => !i.estimatedHours || i.estimatedHours === 0);
   }, [leafItems]);
 
-  // Backlog items: explicitly marked Backlog OR work items not assigned to any milestone, features or higher hierarchy
+  // Backlog items: explicitly marked with status "Backlog"
   const backlogItems = useMemo(() => {
-    return wbsItems.filter(
-      (i) => i.status === "Backlog" || !isAssignedToHierarchy(i, wbsItems)
-    );
-  }, [wbsItems]);
-
-  // Hierarchy items: assigned to a milestone, feature, or higher hierarchy
-  const hierarchyItems = useMemo(() => {
-    return wbsItems.filter(
-      (i) => i.status !== "Backlog" && isAssignedToHierarchy(i, wbsItems)
-    );
-  }, [wbsItems]);
+    return wbsItems.filter((i) => {
+      const conf = getStatusConfig(i.status, statusConfigs);
+      return conf.key.toLowerCase() === "backlog";
+    });
+  }, [wbsItems, statusConfigs]);
 
   // Metric computations for the 3 clean cards
   const totalTasks = wbsItems.length;
@@ -797,24 +790,19 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
     badgeBorder?: string;
     isDefault?: boolean;
   }[] = useMemo(() => {
-    const filteredHierarchy =
-      quickAssignFilter === "unassigned"
-        ? hierarchyItems.filter((i) => !isItemAssigned(i))
-        : hierarchyItems;
-    const filteredBacklog =
-      quickAssignFilter === "unassigned"
-        ? backlogItems.filter((i) => !isItemAssigned(i))
-        : backlogItems;
-
     const list = statusConfigs && statusConfigs.length > 0 ? statusConfigs : DEFAULT_STATUS_CONFIGS;
 
+    const baseItems =
+      quickAssignFilter === "unassigned"
+        ? wbsItems.filter((i) => !isItemAssigned(i))
+        : wbsItems;
+
     return list.map((conf) => {
-      let items: WbsItem[] = [];
-      if (conf.key === "Backlog") {
-        items = filteredBacklog;
-      } else {
-        items = filteredHierarchy.filter((i) => i.status === conf.key);
-      }
+      const items = baseItems.filter((i) => {
+        const itemConfig = getStatusConfig(i.status, list);
+        return itemConfig.key.toLowerCase() === conf.key.toLowerCase();
+      });
+
       return {
         key: conf.key,
         status: conf.key as WorkItemStatus,
@@ -829,7 +817,7 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
         isDefault: conf.isDefault,
       };
     });
-  }, [hierarchyItems, backlogItems, quickAssignFilter, statusConfigs]);
+  }, [wbsItems, quickAssignFilter, statusConfigs]);
 
   return (
     <div className="bg-[#090D16] border border-[#1E293B] rounded-xl shadow-xl overflow-hidden font-sans">
@@ -934,7 +922,7 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
               if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
             }}
             className="bg-[#0B0F19] border border-[#1E293B] hover:border-indigo-500/50 rounded-xl p-3.5 sm:p-4 flex items-center gap-3.5 shadow-xs transition-colors cursor-pointer"
-            title="Click to jump to Backlog items (work items not assigned to hierarchy)"
+            title="Click to jump to Backlog items"
           >
             <div
               className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${
@@ -961,7 +949,7 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
               <p className="text-[11px] text-slate-400 mt-0.5 truncate">
                 {backlogItems.length === 0 ? (
                   <>
-                    <span className="text-emerald-400 font-medium">0 unassigned</span>{" "}
+                    <span className="text-emerald-400 font-medium">0 in backlog</span>{" "}
                     <span className="text-slate-500 font-normal">({totalTasks} total tasks)</span>
                   </>
                 ) : (
@@ -1277,7 +1265,7 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
                               className="py-6 text-center text-slate-500 text-xs italic"
                             >
                               {group.key === "Backlog"
-                                ? "No unassigned backlog items. All work items are allocated to milestones or higher hierarchy."
+                                ? "No tasks currently in Backlog"
                                 : `No tasks currently in ${group.label}`}
                             </td>
                           </tr>

@@ -78,7 +78,7 @@ export const DEFAULT_STATUS_CONFIGS: StatusConfig[] = [
     badgeBorder: "border-indigo-500/30",
     isDefault: true,
     order: 6,
-    description: "Work items not assigned to any milestone, features or higher hierarchy",
+    description: "Work items queued in backlog awaiting sprint or schedule allocation",
   },
 ];
 

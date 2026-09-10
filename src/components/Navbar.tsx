@@ -55,6 +55,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [isAiLoading, setIsAiLoading] = useState(false);
+  const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
   const [aiResponseModal, setAiResponseModal] = useState<{
     query: string;
     reply: string;
@@ -109,36 +110,39 @@ export const Navbar: React.FC<NavbarProps> = ({
     <>
       <header
         id="app-header"
-        className="h-14 border-b border-[#1E293B] bg-[#090D16]/90 backdrop-blur-md flex items-center px-4 sm:px-6 justify-between shrink-0 gap-4 z-20"
+        className="h-14 border-b border-[#1E293B] bg-[#090D16]/95 backdrop-blur-md flex items-center px-2.5 sm:px-4 md:px-6 justify-between shrink-0 gap-1.5 sm:gap-3 z-20"
       >
-        {/* Mobile Hamburger Menu */}
-        <button
-          onClick={onOpenMobileSidebar}
-          className="md:hidden p-1.5 rounded-lg text-[#94A3B8] hover:text-white hover:bg-[#1E293B] cursor-pointer"
-          title="Open Navigation Menu"
-        >
-          <Menu className="h-5 w-5" />
-        </button>
+        {/* Left Side: Mobile Hamburger Menu & Project Switcher */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 min-w-0">
+          <button
+            onClick={onOpenMobileSidebar}
+            className="md:hidden p-1.5 rounded-lg text-[#94A3B8] hover:text-white hover:bg-[#1E293B] cursor-pointer shrink-0"
+            title="Open Navigation Menu"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
 
-        {/* Project Switcher Dropdown (ClickUp Style) */}
-        {projects.length > 0 && onSelectProject && (
-          <div className="shrink-0">
-            <ProjectSwitcher
-              projects={projects}
-              sprints={sprints}
-              activeProjectId={activeProjectId}
-              onSelectProject={onSelectProject}
-              onOpenCreateProject={onOpenCreateProject}
-              onOpenCreateSprint={onOpenCreateSprint}
-              onOpenEditProject={onOpenEditProject}
-              onPromptDeleteProject={onPromptDeleteProject}
-            />
-          </div>
-        )}
+          {/* Project Switcher Dropdown (ClickUp Style) */}
+          {projects.length > 0 && onSelectProject && (
+            <div className="shrink-0">
+              <ProjectSwitcher
+                projects={projects}
+                sprints={sprints}
+                activeProjectId={activeProjectId}
+                onSelectProject={onSelectProject}
+                onOpenCreateProject={onOpenCreateProject}
+                onOpenCreateSprint={onOpenCreateSprint}
+                onOpenEditProject={onOpenEditProject}
+                onPromptDeleteProject={onPromptDeleteProject}
+                onOpenSyncModal={onOpenSyncModal}
+              />
+            </div>
+          )}
+        </div>
 
-        {/* AI Query Input */}
-        <div className="relative flex-1 max-w-xl min-w-0">
-          <form onSubmit={(e) => handleAiSearch(e)} className="relative flex items-center">
+        {/* Center: Desktop/Tablet AI Search Bar (hidden on mobile to prevent crushing) */}
+        <div className="hidden md:flex relative flex-1 max-w-md lg:max-w-xl min-w-0 mx-2">
+          <form onSubmit={(e) => handleAiSearch(e)} className="relative flex items-center w-full">
             <div className="absolute inset-y-0 left-2.5 sm:left-3 flex items-center pointer-events-none text-slate-400">
               <Search className="w-3.5 sm:w-4 h-3.5 sm:h-4 text-slate-400" />
             </div>
@@ -148,7 +152,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder='Ask AI: "What is our current SPI?"'
-              className="w-full bg-[#030712] border border-[#1E293B] rounded-lg py-1.5 pl-8 sm:pl-10 pr-18 sm:pr-24 text-xs focus:ring-1 focus:ring-[#38BDF8] focus:border-[#38BDF8] outline-none text-white placeholder-slate-400 transition-all shadow-inner truncate"
+              className="w-full bg-[#030712] border border-[#1E293B] rounded-lg py-1.5 pl-8 sm:pl-10 pr-20 sm:pr-24 text-xs focus:ring-1 focus:ring-[#38BDF8] focus:border-[#38BDF8] outline-none text-white placeholder-slate-400 transition-all shadow-inner truncate"
             />
             <div className="absolute inset-y-0 right-1 flex items-center">
               <button
@@ -168,31 +172,91 @@ export const Navbar: React.FC<NavbarProps> = ({
           </form>
         </div>
 
-        {/* Right Action & Period Display */}
-        <div className="flex items-center space-x-2 sm:space-x-3 shrink-0">
+        {/* Right Action Buttons */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* Mobile AI Search Toggle Button */}
           <button
-            onClick={onOpenSyncModal}
-            className="bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/30 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
-            title="Sync projects across phone and desktop"
+            onClick={() => setIsMobileSearchOpen(!isMobileSearchOpen)}
+            className={`md:hidden p-1.5 rounded-lg border transition-colors cursor-pointer flex items-center justify-center shrink-0 ${
+              isMobileSearchOpen
+                ? "bg-sky-500/20 text-sky-300 border-sky-500/50 shadow-xs"
+                : "bg-[#0F1422] text-slate-400 hover:text-white border-[#232C42]"
+            }`}
+            title="Ask AI PM"
           >
-            <Cloud className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">Sync Devices</span>
+            <Sparkles className="w-4 h-4 text-sky-400" />
           </button>
 
+          {/* Sync Devices Button - Prominently visible on both mobile and desktop */}
+          <button
+            id="sync-devices-nav-btn"
+            onClick={onOpenSyncModal}
+            className="bg-sky-500/15 hover:bg-sky-500/25 active:scale-95 text-sky-300 border border-sky-500/40 px-2 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 shrink-0"
+            title="Sync projects across phone and desktop"
+          >
+            <Cloud className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+            <span className="font-bold">Sync</span>
+            <span className="hidden md:inline text-sky-300/80">Devices</span>
+          </button>
+
+          {/* Upload Docs Button */}
           <button
             onClick={onUploadDocsClick || (() => setActiveTab("documents"))}
-            className="bg-[#38BDF8] hover:bg-[#0EA5E9] text-[#030712] px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+            className="bg-[#38BDF8] hover:bg-[#0EA5E9] active:scale-95 text-[#030712] px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 shrink-0"
+            title="Upload Documents"
           >
-            <Upload className="w-3.5 h-3.5" />
+            <Upload className="w-3.5 h-3.5 shrink-0" />
             <span className="hidden sm:inline">Upload Docs</span>
           </button>
 
-          <div className="hidden sm:block text-right font-mono border-l border-[#1E293B] pl-3">
+          {/* Report Period (Desktop only) */}
+          <div className="hidden lg:block text-right font-mono border-l border-[#1E293B] pl-3">
             <p className="text-[10px] text-slate-400 uppercase tracking-wider">Report Period</p>
             <p className="text-[11px] font-bold text-white">Q3 - WEEK 12</p>
           </div>
         </div>
       </header>
+
+      {/* Expandable Mobile Search Bar when user taps AI icon on mobile */}
+      {isMobileSearchOpen && (
+        <div className="md:hidden px-3 py-2.5 bg-[#070B14] border-b border-[#1E293B] animate-in slide-in-from-top-2 duration-150 shadow-xl space-y-2">
+          <form onSubmit={(e) => handleAiSearch(e)} className="relative flex items-center">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder='Ask AI PM: "What is our current SPI?"'
+              className="w-full bg-[#030712] border border-[#1E293B] rounded-lg py-1.5 pl-8 pr-20 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-sky-500 shadow-inner"
+              autoFocus
+            />
+            <button
+              type="submit"
+              disabled={isAiLoading || !searchQuery.trim()}
+              className="absolute right-1 bg-[#38BDF8] hover:bg-[#0EA5E9] disabled:opacity-50 text-[#030712] px-2.5 py-1 rounded text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+            >
+              {isAiLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+              <span>Ask</span>
+            </button>
+          </form>
+          {/* Quick prompts */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+            {quickPrompts.slice(0, 2).map((prompt, idx) => (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => {
+                  handleAiSearch(undefined, prompt);
+                  setIsMobileSearchOpen(false);
+                }}
+                className="text-[10px] bg-slate-900/90 hover:bg-slate-800 text-slate-300 hover:text-white px-2 py-1 rounded-md border border-slate-800 whitespace-nowrap cursor-pointer shrink-0"
+              >
+                {prompt}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* AI Query Response Dialog */}
       {aiResponseModal && (

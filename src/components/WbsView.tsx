@@ -124,6 +124,7 @@ export const WbsView: React.FC<WbsViewProps> = ({
 
   // Modal states
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [initialStatusForAdd, setInitialStatusForAdd] = useState<WorkItemStatus>("Backlog");
   const [selectedParentForAdd, setSelectedParentForAdd] = useState<WbsItem | null>(null);
   const [localSprints, setLocalSprints] = useState<Sprint[]>(() => loadSprints());
   const sprints = propSprints || localSprints;
@@ -549,6 +550,7 @@ export const WbsView: React.FC<WbsViewProps> = ({
             return;
           }
           setSelectedParentForAdd(null);
+          setInitialStatusForAdd(statusPreset || "Backlog");
           setIsAddModalOpen(true);
         }}
         onOpenEditModal={(item) => {
@@ -560,6 +562,7 @@ export const WbsView: React.FC<WbsViewProps> = ({
       <CreateWorkItemModal
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
+        initialStatus={initialStatusForAdd}
         onSubmit={(newItem, createAnother) => {
           onAddWbsItem(newItem);
           if (newItem.sprintId) {

@@ -321,6 +321,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
 
               <div className="flex items-center gap-1 text-slate-400">
+                {onOpenSyncModal && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onCloseMobile) onCloseMobile();
+                      onOpenSyncModal();
+                    }}
+                    className="p-1 hover:text-sky-300 text-sky-400 hover:bg-[#1A2236] rounded transition-colors cursor-pointer"
+                    title="Sync Phone & Cloud"
+                  >
+                    <Cloud className="w-3.5 h-3.5" />
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setActiveTab("documents")}
@@ -757,7 +770,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
 
               {/* Bottom Add Project Link */}
-              <div className="pt-3 border-t border-[#1C2337] mt-3">
+              <div className="pt-3 border-t border-[#1C2337] mt-3 space-y-1">
                 <button
                   type="button"
                   onClick={() => {
@@ -768,6 +781,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <Plus className="w-3.5 h-3.5 text-indigo-400" />
                   <span>Create Project</span>
                 </button>
+
+                {onOpenSyncModal && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onCloseMobile) onCloseMobile();
+                      onOpenSyncModal();
+                    }}
+                    className="w-full flex items-center justify-between px-2.5 py-2 text-xs text-sky-400 hover:text-sky-300 hover:bg-sky-500/10 rounded-lg transition-colors cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Cloud className="w-3.5 h-3.5" />
+                      <span>Sync Phone & Cloud</span>
+                    </div>
+                    <span className="text-[10px] bg-sky-500/20 text-sky-300 px-1.5 py-0.5 rounded font-mono">
+                      Sync
+                    </span>
+                  </button>
+                )}
               </div>
             </div>
 

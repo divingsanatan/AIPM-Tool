@@ -59,6 +59,7 @@ interface CreateWorkItemModalProps {
   sprints?: Sprint[];
   projects?: Project[];
   initialParentItem?: WbsItem | null;
+  initialStatus?: WorkItemStatus;
   onOpenCreateProject?: () => void;
   onOpenCreateSprint?: (projectId?: string) => void;
   onAddNewProject?: (project: Project) => void;
@@ -76,6 +77,7 @@ export const CreateWorkItemModal: React.FC<CreateWorkItemModalProps> = ({
   sprints = DEFAULT_SPRINTS,
   projects = DEFAULT_PROJECTS,
   initialParentItem = null,
+  initialStatus,
   onOpenCreateProject,
   onOpenCreateSprint,
   onAddNewProject,
@@ -89,7 +91,7 @@ export const CreateWorkItemModal: React.FC<CreateWorkItemModalProps> = ({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [type, setType] = useState<WbsType>("Task");
-  const [status, setStatus] = useState<WorkItemStatus>("Backlog");
+  const [status, setStatus] = useState<WorkItemStatus>(initialStatus || "Backlog");
   const [priority, setPriority] = useState<PriorityLevel>("Medium");
   const [assignedStakeholderIds, setAssignedStakeholderIds] = useState<string[]>(
     stakeholders[0] ? [stakeholders[0].id] : []
@@ -159,11 +161,13 @@ export const CreateWorkItemModal: React.FC<CreateWorkItemModalProps> = ({
         const nextCode = `${rootItems.length + 1}.0`;
         setWbsCode(nextCode);
       }
-      // Sync progress with status
-      const initialProgress = getProgressForStatus("Backlog", statusConfigs);
+      // Sync status and progress with initialStatus
+      const targetStatus = initialStatus || "Backlog";
+      setStatus(targetStatus);
+      const initialProgress = getProgressForStatus(targetStatus, statusConfigs);
       setProgressPercent(initialProgress);
     }
-  }, [isOpen, initialParentItem, wbsItems, statusConfigs]);
+  }, [isOpen, initialParentItem, initialStatus, wbsItems, statusConfigs]);
 
   // Recalculate WBS code and suggested type when parent changes
   const handleSelectParent = (parentId: string | null) => {
