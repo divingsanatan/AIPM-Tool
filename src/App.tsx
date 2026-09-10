@@ -45,6 +45,7 @@ import { RaciView } from "./components/RaciView";
 import { ChangeManagementView } from "./components/ChangeManagementView";
 import { DocumentsView } from "./components/DocumentsView";
 import { ReportsView } from "./components/ReportsView";
+import { SmartAiPal } from "./components/SmartAiPal";
 import { SyncModal } from "./components/SyncModal";
 import {
   fetchServerState,
@@ -978,7 +979,7 @@ export default function App() {
     showToast(`Switched to WBS. Ready to deconstruct "${doc.title}".`);
   };
 
-  // Execute AI action from NLP Search
+  // Execute AI action from NLP Search and Smart AI Pal
   const handleExecuteAiAction = (action: any) => {
     if (!action || action.type === "NONE") return;
 
@@ -993,24 +994,73 @@ export default function App() {
         showToast(`AI Action Applied: ${item.wbsCode} set to ${action.data.status}`);
       }
     } else if (action.type === "ADD_RAID_RISK" && action.data?.title) {
+      const targetProjId = action.data.projectId || (activeProjectId !== "all" ? activeProjectId : projects[0]?.id || "proj-flutter");
+      const targetProj = projects.find((p) => p.id === targetProjId);
       const newRisk: RaidItem = {
         id: `raid-ai-${Date.now()}`,
-        category: "Risk",
+        category: action.data.category || "Risk",
         title: action.data.title,
         description: action.data.description || "Identified via AI project audit",
-        probability: action.data.probability || 3,
-        impact: action.data.impact || 3,
+        probability: (action.data.probability as 1 | 2 | 3 | 4 | 5) || 3,
+        impact: (action.data.impact as 1 | 2 | 3 | 4 | 5) || 3,
         riskExposure: (action.data.probability || 3) * (action.data.impact || 3),
         mitigationStrategy: action.data.mitigation || "Mitigation plan under evaluation",
         status: "Identified",
         ownerId: stakeholders[0]?.id || "",
+        projectId: targetProjId,
         dateRaised: new Date().toISOString().split("T")[0],
         targetResolutionDate: new Date(Date.now() + 21 * 86400000).toISOString().split("T")[0],
       };
       handleAddRaidItem(newRisk);
-      showToast(`AI Action Applied: Added Risk "${newRisk.title}"`);
+      showToast(`AI Action Applied: Added Risk "${newRisk.title}" to ${targetProj?.name || "Project"}`);
+    } else if (action.type === "ADD_CHANGE_REQUEST" && action.data?.title) {
+      const targetProjId = action.data.projectId || (activeProjectId !== "all" ? activeProjectId : projects[0]?.id || "proj-flutter");
+      const newCr: ChangeRequest = {
+        id: `cr-ai-${Date.now()}`,
+        crNumber: `CR-${String(changeRequests.length + 1).padStart(3, "0")}`,
+        code: `CR-${String(changeRequests.length + 1).padStart(3, "0")}`,
+        title: action.data.title,
+        reason: action.data.reason || "Change requested via AI Pal prompt",
+        costImpact: action.data.costImpact || 0,
+        costImpactDollars: action.data.costImpact || 0,
+        scheduleImpactDays: action.data.scheduleImpactDays || 0,
+        ccbStatus: "Draft",
+        status: "Draft",
+        projectId: targetProjId,
+        dateSubmitted: new Date().toISOString().split("T")[0],
+      };
+      handleAddChangeRequest(newCr);
+      showToast(`AI Action Applied: Created ${newCr.code} for ${action.data.title}`);
+    } else if (action.type === "ADD_WBS_ITEM" && action.data?.title) {
+      const targetProjId = action.data.projectId || (activeProjectId !== "all" ? activeProjectId : projects[0]?.id || "proj-flutter");
+      const targetProj = projects.find((p) => p.id === targetProjId);
+      const newItem: WbsItem = {
+        id: `wbs-ai-${Date.now()}`,
+        wbsCode: action.data.wbsCode || `1.${wbsItems.length + 1}`,
+        title: action.data.title,
+        type: action.data.type || "Task",
+        status: "To Do",
+        estimatedHours: action.data.estimatedHours || 40,
+        actualHours: 0,
+        plannedBudget: action.data.plannedBudget || 5000,
+        actualCost: 0,
+        progressPercent: 0,
+        assignedStakeholderId: stakeholders[0]?.id || "sh-001",
+        startDate: new Date().toISOString().split("T")[0],
+        dueDate: new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0],
+        description: "Created via AI Pal action",
+        projectId: targetProjId,
+        projectName: targetProj?.name || "Project",
+        parentId: null,
+      };
+      setWbsItems((prev) => calculateWbsHierarchyRollups([...prev, newItem], stakeholders).rolledUpItems);
+      showToast(`AI Action Applied: Added WBS ${newItem.wbsCode} - ${newItem.title}`);
     } else if (action.type === "NAVIGATE_TAB" && action.data?.tab) {
       setActiveTab(action.data.tab as ActiveTab);
+      showToast(`Navigated to ${action.data.tab.toUpperCase()}`);
+    } else if (action.type === "SELECT_PROJECT" && action.data?.projectId) {
+      handleSelectProject(action.data.projectId);
+      showToast(`Switched project context`);
     } else {
       showToast(`AI recommendation noted: ${action.description || "Review completed"}`);
     }
@@ -1034,7 +1084,7 @@ export default function App() {
     <div className="flex h-screen w-full bg-[#030712] text-[#F8FAFC] font-sans overflow-hidden select-text">
       {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-10 right-6 z-50 flex items-center gap-3 bg-[#0B0F19] border border-[#1E293B] text-[#F8FAFC] px-4 py-2.5 rounded-lg shadow-2xl animate-in slide-in-from-bottom-3 duration-200 text-xs">
+        <div className="fixed top-14 right-4 sm:right-6 z-50 flex items-center gap-3 bg-[#0B0F19] border border-[#1E293B] text-[#F8FAFC] px-4 py-2.5 rounded-lg shadow-2xl animate-in slide-in-from-top-3 duration-200 text-xs">
           <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
           <span className="font-medium">{toastMessage}</span>
           <button
@@ -1084,7 +1134,7 @@ export default function App() {
       />
 
       {/* Main Content Pane */}
-      <main className="flex-1 flex flex-col h-full min-w-0 overflow-hidden bg-[#030712]">
+      <main className="flex-1 flex flex-col h-full min-w-0 overflow-hidden bg-[#030712] relative">
         {/* Top Header with AI Query Input and Period info */}
         <Navbar
           activeTab={activeTab}
@@ -1116,7 +1166,7 @@ export default function App() {
         />
 
         {/* Scrollable Viewport */}
-        <div className="flex-1 overflow-y-auto min-w-0 p-3 sm:p-5 md:p-6 space-y-6">
+        <div className="flex-1 overflow-y-auto min-w-0 p-3 sm:p-5 md:p-6 pb-28 sm:pb-32 space-y-6">
           {activeTab === "dashboard" && (
             <DashboardView
               wbsItems={projectScopedWbsItems}
@@ -1277,6 +1327,25 @@ export default function App() {
             </span>
           </div>
         </footer>
+
+        {/* Floating Smart AI Pal (Persistent bottom dock across devices, projects, and tabs) */}
+        <SmartAiPal
+          projects={projects}
+          activeProjectId={activeProjectId}
+          onSelectProject={handleSelectProject}
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          wbsItems={wbsItems}
+          raidItems={raidItems}
+          changeRequests={changeRequests}
+          stakeholders={stakeholders}
+          documents={documents}
+          evmMetrics={evmMetrics}
+          onExecuteAiAction={handleExecuteAiAction}
+          onAddDocument={handleAddDocument}
+          onBatchAddWbsItems={handleBatchAddWbsItems}
+          showToast={showToast}
+        />
       </main>
 
       {/* Global Project Creation & Edit Modal */}
