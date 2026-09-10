@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { RaidItem, RaidCategory, Stakeholder, EvmMetrics, Project, Sprint } from "../types";
+import { RaidItem, RaidCategory, Stakeholder, EvmMetrics, Project, Sprint, WbsItem } from "../types";
 import {
   ShieldAlert,
   AlertTriangle,
@@ -461,178 +461,244 @@ export const RaidView: React.FC<RaidViewProps> = ({
 
       {/* RAID Log Table */}
       <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl shadow-xs overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-slate-300 min-w-[840px]">
-            <thead className="bg-[#060911] border-b border-[#1E293B] uppercase text-[10px] font-bold text-slate-400 tracking-wider font-mono">
-              <tr>
-                <th className="py-3.5 pl-5 pr-3 whitespace-nowrap">Category</th>
-                <th className="py-3.5 px-3 min-w-[200px]">Title & Root Cause / Description</th>
-                <th className="py-3.5 px-3 whitespace-nowrap">Exposure / Severity</th>
-                <th className="py-3.5 px-3 min-w-[200px]">Mitigation / Resolution Plan</th>
-                <th className="py-3.5 px-3 whitespace-nowrap">Assigned Owner</th>
-                <th className="py-3.5 px-3 whitespace-nowrap">Status</th>
-                <th className="py-3.5 px-3 whitespace-nowrap">Created Date</th>
-                <th className="py-3.5 pr-5 pl-3 text-right whitespace-nowrap">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#1E293B]/70">
-              {filteredItems.map((item) => {
-                const owner = getOwner(item.ownerId);
+        {filteredItems.length === 0 ? (
+          <div className="p-10 text-center space-y-3">
+            <div className="w-12 h-12 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mx-auto text-amber-400">
+              <ShieldAlert className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-white">No RAID items in current filter</h3>
+              <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
+                {selectedSprint
+                  ? `No items are assigned specifically to ${selectedSprint.name}. ${
+                      projectPool.length > 0
+                        ? `There are ${projectPool.length} RAID item(s) logged across the broader project.`
+                        : ""
+                    }`
+                  : "No items match the selected category."}
+              </p>
+            </div>
+            <div className="flex items-center justify-center gap-2 pt-2">
+              {selectedSprint && projectPool.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setSprintScopeFilter("all_project")}
+                  className="px-3 py-1.5 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                >
+                  View All {projectPool.length} Project RAID Items
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleOpenAdd}
+                className="px-3 py-1.5 bg-[#38BDF8] hover:bg-[#0EA5E9] text-[#0F172A] text-xs font-bold rounded-lg transition-colors cursor-pointer"
+              >
+                Log New RAID Item
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs text-slate-300 min-w-[840px]">
+              <thead className="bg-[#060911] border-b border-[#1E293B] uppercase text-[10px] font-bold text-slate-400 tracking-wider font-mono">
+                <tr>
+                  <th className="py-3.5 pl-5 pr-3 whitespace-nowrap">Category</th>
+                  <th className="py-3.5 px-3 min-w-[200px]">Title & Root Cause / Description</th>
+                  <th className="py-3.5 px-3 whitespace-nowrap">Exposure / Severity</th>
+                  <th className="py-3.5 px-3 min-w-[200px]">Mitigation / Resolution Plan</th>
+                  <th className="py-3.5 px-3 whitespace-nowrap">Assigned Owner</th>
+                  <th className="py-3.5 px-3 whitespace-nowrap">Status</th>
+                  <th className="py-3.5 px-3 whitespace-nowrap">Sprint / Scope</th>
+                  <th className="py-3.5 px-3 whitespace-nowrap">Created Date</th>
+                  <th className="py-3.5 pr-5 pl-3 text-right whitespace-nowrap">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#1E293B]/70">
+                {filteredItems.map((item) => {
+                  const owner = getOwner(item.ownerId);
 
-                return (
-                  <tr key={item.id} className="hover:bg-[#0E1526] transition-colors">
-                    {/* Category badge */}
-                    <td className="py-3 pl-5 pr-3 whitespace-nowrap">
-                      <span
-                        className={`px-2.5 py-1 rounded text-[11px] font-bold border inline-block ${
-                          item.category === "Risk"
-                            ? "bg-amber-500/10 text-amber-300 border-amber-500/30"
-                            : item.category === "Issue"
-                            ? "bg-rose-500/10 text-rose-300 border-rose-500/30"
-                            : item.category === "Assumption"
-                            ? "bg-purple-500/10 text-purple-300 border-purple-500/30"
-                            : "bg-blue-500/10 text-blue-300 border-blue-500/30"
-                        }`}
-                      >
-                        {item.category}
-                      </span>
-                    </td>
-
-                    {/* Title & Desc */}
-                    <td className="py-3 px-3 min-w-[200px] max-w-xs">
-                      <span className="font-semibold text-white block">{item.title}</span>
-                      <span className="text-[11px] text-slate-400 line-clamp-2 mt-0.5">
-                        {item.description}
-                      </span>
-                    </td>
-
-                    {/* Exposure / Severity */}
-                    <td className="py-3 px-3 font-mono whitespace-nowrap">
-                      {item.category === "Risk" ? (
-                        <div>
-                          <span
-                            className={`px-2 py-0.5 rounded text-xs font-bold inline-block ${
-                              (item.riskExposure || 0) >= 15
-                                ? "bg-rose-500/20 text-rose-400 border border-rose-500/30"
-                                : (item.riskExposure || 0) >= 8
-                                ? "bg-amber-500/20 text-amber-400 border border-amber-500/30"
-                                : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                            }`}
-                          >
-                            Score {item.riskExposure} (P{item.probability} × I{item.impact})
-                          </span>
-                        </div>
-                      ) : item.category === "Issue" ? (
+                  return (
+                    <tr key={item.id} className="hover:bg-[#0E1526] transition-colors">
+                      {/* Category badge */}
+                      <td className="py-3 pl-5 pr-3 whitespace-nowrap">
                         <span
-                          className={`px-2 py-0.5 rounded text-xs font-bold inline-block ${
-                            item.severity === "Critical"
-                              ? "bg-rose-600 text-white"
-                              : item.severity === "High"
-                              ? "bg-rose-500/20 text-rose-400"
-                              : "bg-amber-500/20 text-amber-400"
+                          className={`px-2.5 py-1 rounded text-[11px] font-bold border inline-block ${
+                            item.category === "Risk"
+                              ? "bg-amber-500/10 text-amber-300 border-amber-500/30"
+                              : item.category === "Issue"
+                              ? "bg-rose-500/10 text-rose-300 border-rose-500/30"
+                              : item.category === "Assumption"
+                              ? "bg-purple-500/10 text-purple-300 border-purple-500/30"
+                              : "bg-blue-500/10 text-blue-300 border-blue-500/30"
                           }`}
                         >
-                          {item.severity} Severity
+                          {item.category}
                         </span>
-                      ) : item.category === "Dependency" ? (
-                        <span className="text-slate-300 text-[11px]">
-                          {item.dependencyType || "Finish-to-Start"}
-                        </span>
-                      ) : (
-                        <span className="text-slate-400 text-[11px]">Assumption</span>
-                      )}
-                    </td>
+                      </td>
 
-                    {/* Mitigation Strategy */}
-                    <td className="py-3 px-3 min-w-[200px] max-w-xs text-slate-300 text-[11px]">
-                      {item.category === "Risk" ? (
-                        <div>
-                          <span className="font-medium text-slate-200 block">
-                            {item.mitigationStrategy || "Strategy pending review"}
-                          </span>
-                          {item.contingencyPlan && (
-                            <span className="text-slate-500 block mt-0.5">
-                              Contingency: {item.contingencyPlan}
+                      {/* Title & Desc */}
+                      <td className="py-3 px-3 min-w-[200px] max-w-xs">
+                        <span className="font-semibold text-white block">{item.title}</span>
+                        <span className="text-[11px] text-slate-400 line-clamp-2 mt-0.5">
+                          {item.description}
+                        </span>
+                      </td>
+
+                      {/* Exposure / Severity */}
+                      <td className="py-3 px-3 font-mono whitespace-nowrap">
+                        {item.category === "Risk" ? (
+                          <div>
+                            <span
+                              className={`px-2 py-0.5 rounded text-xs font-bold inline-block ${
+                                (item.riskExposure || 0) >= 15
+                                  ? "bg-rose-500/20 text-rose-400 border border-rose-500/30"
+                                  : (item.riskExposure || 0) >= 8
+                                  ? "bg-amber-500/20 text-amber-400 border border-amber-500/30"
+                                  : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                              }`}
+                            >
+                              Score {item.riskExposure} (P{item.probability} × I{item.impact})
                             </span>
-                          )}
-                        </div>
-                      ) : item.category === "Issue" ? (
-                        <span>{item.resolutionPlan || "Action plan active"}</span>
-                      ) : item.category === "Assumption" ? (
-                        <span className="text-slate-400">Impact if false: {item.impactIfFalse}</span>
-                      ) : (
-                        <span>{item.upstreamDownstream} dependency</span>
-                      )}
-                    </td>
+                          </div>
+                        ) : item.category === "Issue" ? (
+                          <span
+                            className={`px-2 py-0.5 rounded text-xs font-bold inline-block ${
+                              item.severity === "Critical"
+                                ? "bg-rose-600 text-white"
+                                : item.severity === "High"
+                                ? "bg-rose-500/20 text-rose-400"
+                                : "bg-amber-500/20 text-amber-400"
+                            }`}
+                          >
+                            {item.severity} Severity
+                          </span>
+                        ) : item.category === "Dependency" ? (
+                          <span className="text-slate-300 text-[11px]">
+                            {item.dependencyType || "Finish-to-Start"}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 text-[11px]">Assumption</span>
+                        )}
+                      </td>
 
-                    {/* Owner */}
-                    <td className="py-3 px-3 text-slate-200 whitespace-nowrap">
-                      {owner ? (
-                        <div>
-                          <span className="font-medium block">{owner.name}</span>
-                          <span className="text-[10px] text-slate-400">{owner.role}</span>
-                        </div>
-                      ) : (
-                        <span className="text-slate-500">Unassigned</span>
-                      )}
-                    </td>
+                      {/* Mitigation Strategy */}
+                      <td className="py-3 px-3 min-w-[200px] max-w-xs text-slate-300 text-[11px]">
+                        {item.category === "Risk" ? (
+                          <div>
+                            <span className="font-medium text-slate-200 block">
+                              {item.mitigationStrategy || "Strategy pending review"}
+                            </span>
+                            {item.contingencyPlan && (
+                              <span className="text-slate-500 block mt-0.5">
+                                Contingency: {item.contingencyPlan}
+                              </span>
+                            )}
+                          </div>
+                        ) : item.category === "Issue" ? (
+                          <span>{item.resolutionPlan || "Action plan active"}</span>
+                        ) : item.category === "Assumption" ? (
+                          <span className="text-slate-400">Impact if false: {item.impactIfFalse}</span>
+                        ) : (
+                          <span>{item.upstreamDownstream} dependency</span>
+                        )}
+                      </td>
 
-                    {/* Status */}
-                    <td className="py-3 px-3 whitespace-nowrap">
-                      <select
-                        value={item.status}
-                        onChange={(e) =>
-                          onUpdateRaidItem({ ...item, status: e.target.value as any })
-                        }
-                        className="bg-slate-800 border border-slate-700 text-slate-200 rounded px-2 py-1 text-xs cursor-pointer focus:ring-1 focus:ring-blue-500"
-                      >
-                        <option value="Identified">Identified</option>
-                        <option value="Open">Open</option>
-                        <option value="In Progress">In Progress</option>
-                        <option value="Mitigated">Mitigated</option>
-                        <option value="Accepted">Accepted</option>
-                        <option value="Closed">Closed</option>
-                        <option value="Resolved">Resolved</option>
-                        <option value="Validated">Validated</option>
-                      </select>
-                    </td>
+                      {/* Owner */}
+                      <td className="py-3 px-3 text-slate-200 whitespace-nowrap">
+                        {owner ? (
+                          <div>
+                            <span className="font-medium block">{owner.name}</span>
+                            <span className="text-[10px] text-slate-400">{owner.role}</span>
+                          </div>
+                        ) : (
+                          <span className="text-slate-500">Unassigned</span>
+                        )}
+                      </td>
 
-                    {/* Creation Date */}
-                    <td className="py-3 px-3 font-mono text-slate-400 whitespace-nowrap">
-                      {item.dateRaised || item.targetResolutionDate || new Date().toISOString().split("T")[0]}
-                    </td>
-
-                    {/* Actions */}
-                    <td className="py-3 pr-5 pl-3 text-right whitespace-nowrap">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          type="button"
-                          onClick={() => handleOpenEdit(item)}
-                          className="p-1.5 rounded text-slate-400 hover:text-sky-300 hover:bg-slate-800 transition-colors cursor-pointer"
-                          title="Edit RAID Item"
+                      {/* Status */}
+                      <td className="py-3 px-3 whitespace-nowrap">
+                        <select
+                          value={item.status}
+                          onChange={(e) =>
+                            onUpdateRaidItem({ ...item, status: e.target.value as any })
+                          }
+                          className="bg-slate-800 border border-slate-700 text-slate-200 rounded px-2 py-1 text-xs cursor-pointer focus:ring-1 focus:ring-blue-500"
                         >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (confirm(`Delete ${item.category} "${item.title}"?`)) {
-                              onDeleteRaidItem(item.id);
-                            }
-                          }}
-                          className="p-1.5 rounded text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors cursor-pointer"
-                          title="Delete RAID Item"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                          <option value="Identified">Identified</option>
+                          <option value="Open">Open</option>
+                          <option value="In Progress">In Progress</option>
+                          <option value="Mitigated">Mitigated</option>
+                          <option value="Accepted">Accepted</option>
+                          <option value="Closed">Closed</option>
+                          <option value="Resolved">Resolved</option>
+                          <option value="Validated">Validated</option>
+                        </select>
+                      </td>
+
+                      {/* Sprint / Scope */}
+                      <td className="py-3 px-3 whitespace-nowrap">
+                        {item.sprintId ? (
+                          (() => {
+                            const sp = sprints?.find((s) => s.id === item.sprintId);
+                            const isCurrent = selectedSprint?.id === item.sprintId;
+                            return (
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold border inline-flex items-center gap-1 ${
+                                  isCurrent
+                                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                                    : "bg-[#141C2E] text-sky-300 border-slate-800"
+                                }`}
+                                title={sp ? `${sp.name} (${sp.startDate} to ${sp.endDate})` : item.sprintId}
+                              >
+                                {isCurrent && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>}
+                                {sp ? sp.name : item.sprintId}
+                              </span>
+                            );
+                          })()
+                        ) : (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-mono text-slate-400 bg-slate-900/80 border border-slate-800 inline-flex items-center gap-1">
+                            Project-Wide
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Creation Date */}
+                      <td className="py-3 px-3 font-mono text-slate-400 whitespace-nowrap">
+                        {item.dateRaised || item.targetResolutionDate || new Date().toISOString().split("T")[0]}
+                      </td>
+
+                      {/* Actions */}
+                      <td className="py-3 pr-5 pl-3 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEdit(item)}
+                            className="p-1.5 rounded text-slate-400 hover:text-sky-300 hover:bg-slate-800 transition-colors cursor-pointer"
+                            title="Edit RAID Item"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (confirm(`Delete ${item.category} "${item.title}"?`)) {
+                                onDeleteRaidItem(item.id);
+                              }
+                            }}
+                            className="p-1.5 rounded text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors cursor-pointer"
+                            title="Delete RAID Item"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Add / Edit RAID Modal */}
@@ -687,6 +753,40 @@ export const RaidView: React.FC<RaidViewProps> = ({
                     {stakeholders.map((s) => (
                       <option key={s.id} value={s.id}>
                         {s.name} ({s.role})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Sprint and WBS Work Item Scope */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">Target Sprint</label>
+                  <select
+                    value={formData.sprintId || ""}
+                    onChange={(e) => setFormData({ ...formData, sprintId: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono"
+                  >
+                    <option value="">Project-wide (All Sprints)</option>
+                    {sprints?.map((sp) => (
+                      <option key={sp.id} value={sp.id}>
+                        {sp.name} ({sp.status})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">Associated WBS Work Item</label>
+                  <select
+                    value={formData.wbsItemId || ""}
+                    onChange={(e) => setFormData({ ...formData, wbsItemId: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono truncate"
+                  >
+                    <option value="">None (Project-wide item)</option>
+                    {wbsItems?.map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.code || w.wbsCode} - {w.title.slice(0, 30)}
                       </option>
                     ))}
                   </select>

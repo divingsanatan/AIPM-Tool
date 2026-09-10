@@ -335,14 +335,25 @@ export default function App() {
       });
     }
     if (selectedSprintId) {
-      items = items.filter((r) => {
-        if (r.sprintId) return r.sprintId === selectedSprintId;
-        if (r.wbsItemId) {
-          const wbs = wbsItems.find((w) => w.id === r.wbsItemId);
-          if (wbs?.sprintId) return wbs.sprintId === selectedSprintId;
-        }
-        return false;
-      });
+      if (selectedSprintId === "backlog") {
+        items = items.filter((r) => {
+          if (r.sprintId) return false;
+          if (r.wbsItemId) {
+            const wbs = wbsItems.find((w) => w.id === r.wbsItemId);
+            if (wbs?.sprintId) return false;
+          }
+          return true;
+        });
+      } else {
+        items = items.filter((r) => {
+          if (r.sprintId) return r.sprintId === selectedSprintId;
+          if (r.wbsItemId) {
+            const wbs = wbsItems.find((w) => w.id === r.wbsItemId);
+            if (wbs?.sprintId) return wbs.sprintId === selectedSprintId;
+          }
+          return false;
+        });
+      }
     }
     return items;
   }, [raidItems, activeProjectId, selectedSprintId, sprints, wbsItems]);
@@ -411,10 +422,28 @@ export default function App() {
       });
     }
     if (selectedSprintId) {
-      items = items.filter((cr) => cr.sprintId === selectedSprintId);
+      if (selectedSprintId === "backlog") {
+        items = items.filter((cr) => {
+          if (cr.sprintId) return false;
+          if (cr.wbsItemId) {
+            const wbs = wbsItems.find((w) => w.id === cr.wbsItemId);
+            if (wbs?.sprintId) return false;
+          }
+          return true;
+        });
+      } else {
+        items = items.filter((cr) => {
+          if (cr.sprintId === selectedSprintId) return true;
+          if (cr.wbsItemId) {
+            const wbs = wbsItems.find((w) => w.id === cr.wbsItemId);
+            if (wbs?.sprintId === selectedSprintId) return true;
+          }
+          return false;
+        });
+      }
     }
     return items;
-  }, [changeRequests, activeProjectId, selectedSprintId, sprints]);
+  }, [changeRequests, activeProjectId, selectedSprintId, sprints, wbsItems]);
 
   const filteredSprints = useMemo(() => {
     if (activeProjectId === "all") return sprints;
@@ -884,6 +913,9 @@ export default function App() {
           {activeTab === "raid" && (
             <RaidView
               raidItems={filteredRaidItems}
+              allProjectRaidItems={projectScopedRaidItems}
+              sprints={sprints}
+              wbsItems={projectScopedWbsItems}
               stakeholders={filteredStakeholders}
               evmMetrics={evmMetrics}
               onAddRaidItem={handleAddRaidItem}
@@ -892,6 +924,7 @@ export default function App() {
               onRequestRiskReport={() => setActiveTab("reports")}
               activeProject={activeProject}
               selectedSprint={sprints.find((s) => s.id === selectedSprintId) || null}
+              onSelectSprint={setSelectedSprintId}
               onClearSprint={() => handleSelectSprint(null)}
             />
           )}
@@ -908,6 +941,7 @@ export default function App() {
           {activeTab === "change-management" && (
             <ChangeManagementView
               changeRequests={filteredChangeRequests}
+              allProjectChangeRequests={projectScopedChangeRequests}
               stakeholders={filteredStakeholders}
               sprints={sprints}
               wbsItems={filteredWbsItems}
