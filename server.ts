@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
@@ -10,6 +11,18 @@ const app = express();
 const PORT = 3000;
 
 app.use(express.json({ limit: "15mb" }));
+
+// Server-side persistent storage directory
+const DATA_DIR = path.join(process.cwd(), "data");
+const STATE_FILE = path.join(DATA_DIR, "app_state.json");
+
+if (!fs.existsSync(DATA_DIR)) {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  } catch (e) {
+    console.error("Failed to create data directory:", e);
+  }
+}
 
 // Lazy get or initialize Gemini client
 function getGeminiClient(): GoogleGenAI | null {
@@ -28,6 +41,59 @@ function getGeminiClient(): GoogleGenAI | null {
 // Health check
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// Centralized persistent state endpoint for multi-device sync
+app.get("/api/state", (_req, res) => {
+  try {
+    if (fs.existsSync(STATE_FILE)) {
+      const raw = fs.readFileSync(STATE_FILE, "utf-8");
+      return res.json(JSON.parse(raw));
+    }
+    return res.json({
+      projects: null,
+      sprints: null,
+      wbsItems: null,
+      raidItems: null,
+      changeRequests: null,
+      stakeholders: null,
+      lastUpdated: null,
+    });
+  } catch (err: any) {
+    console.error("Error reading state file:", err);
+    return res.status(500).json({ error: "Failed to read server state" });
+  }
+});
+
+app.post("/api/state", (req, res) => {
+  try {
+    const incoming = req.body;
+    let existing: any = {};
+    if (fs.existsSync(STATE_FILE)) {
+      try {
+        existing = JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
+      } catch (e) {
+        existing = {};
+      }
+    }
+
+    const merged = {
+      ...existing,
+      ...incoming,
+      lastUpdated: new Date().toISOString(),
+    };
+
+    fs.writeFileSync(STATE_FILE, JSON.stringify(merged, null, 2), "utf-8");
+    return res.json({
+      success: true,
+      lastUpdated: merged.lastUpdated,
+      projectCount: merged.projects?.length || 0,
+      sprintCount: merged.sprints?.length || 0,
+    });
+  } catch (err: any) {
+    console.error("Error saving state file:", err);
+    return res.status(500).json({ error: "Failed to save server state" });
+  }
 });
 
 // Natural Language AI Project Assistant & Action Search

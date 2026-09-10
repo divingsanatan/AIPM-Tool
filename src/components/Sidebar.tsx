@@ -25,6 +25,7 @@ import {
   X,
   Pencil,
   Trash2,
+  Cloud,
 } from "lucide-react";
 import { ActiveTab, Project, Sprint, WbsItem, RaidItem, ChangeRequest } from "../types";
 
@@ -45,6 +46,7 @@ interface SidebarProps {
   onDeleteProject?: (project: Project) => void;
   onOpenCreateWorkItem?: () => void;
   onOpenAiAssistant?: () => void;
+  onOpenSyncModal?: () => void;
   criticalRisksCount?: number;
   blockedWbsCount?: number;
   pendingCrCount?: number;
@@ -72,6 +74,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onDeleteProject,
   onOpenCreateWorkItem,
   onOpenAiAssistant,
+  onOpenSyncModal,
   criticalRisksCount = 0,
   blockedWbsCount = 0,
   pendingCrCount = 0,
@@ -258,6 +261,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           {/* Bottom Dock Controls */}
           <div className="w-full flex flex-col items-center pt-2 space-y-2 border-t border-[#242142]/70 mt-2">
+            {/* Multi-Device Cloud Sync Button */}
+            {onOpenSyncModal && (
+              <div className="flex flex-col items-center">
+                <button
+                  type="button"
+                  onClick={onOpenSyncModal}
+                  className="w-9 h-9 rounded-xl flex items-center justify-center transition-colors cursor-pointer text-sky-400 hover:text-sky-300 hover:bg-sky-500/15 border border-sky-500/30"
+                  title="Sync Phone & Cloud Projects"
+                >
+                  <Cloud className="w-4 h-4" />
+                </button>
+                <span className="text-[9px] font-medium text-sky-400 mt-0.5">
+                  Sync
+                </span>
+              </div>
+            )}
+
             {/* Project / Sprint Tree Toggle */}
             <button
               type="button"

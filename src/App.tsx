@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   WbsItem,
   Stakeholder,
@@ -44,11 +44,19 @@ import { RaciView } from "./components/RaciView";
 import { ChangeManagementView } from "./components/ChangeManagementView";
 import { DocumentsView } from "./components/DocumentsView";
 import { ReportsView } from "./components/ReportsView";
+import { SyncModal } from "./components/SyncModal";
+import {
+  fetchServerState,
+  pushServerState,
+  mergeProjects,
+  mergeSprints,
+} from "./utils/cloudSync";
 import { CheckCircle2, X } from "lucide-react";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("dashboard");
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
 
   // Multi-Project and Multi-Sprint Architecture
   const [projects, setProjects] = useState<Project[]>(() => loadProjects());
@@ -78,6 +86,77 @@ export default function App() {
     setTimeout(() => {
       setToastMessage((current) => (current === msg ? null : current));
     }, 4000);
+  };
+
+  // Centralized Server Sync: automatically checks and merges cloud projects on mount
+  useEffect(() => {
+    let isMounted = true;
+    async function initServerSync() {
+      try {
+        const serverState = await fetchServerState();
+        if (!isMounted || !serverState) return;
+
+        if (serverState.projects && serverState.projects.length > 0) {
+          setProjects((prev) => {
+            const merged = mergeProjects(prev, serverState.projects!);
+            saveProjects(merged);
+            return merged;
+          });
+        } else {
+          // Push initial local projects to server so other devices can pull them
+          const localProjects = loadProjects();
+          const localSprints = loadSprints();
+          pushServerState({
+            projects: localProjects,
+            sprints: localSprints,
+            wbsItems,
+            raidItems,
+            changeRequests,
+            stakeholders,
+          });
+        }
+
+        if (serverState.sprints && serverState.sprints.length > 0) {
+          setSprints((prev) => {
+            const merged = mergeSprints(prev, serverState.sprints!);
+            saveSprints(merged);
+            return merged;
+          });
+        }
+      } catch (err) {
+        console.warn("Server sync check failed:", err);
+      }
+    }
+    initServerSync();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const handleApplyMergedData = (merged: {
+    projects?: Project[];
+    sprints?: Sprint[];
+    wbsItems?: WbsItem[];
+    raidItems?: RaidItem[];
+    changeRequests?: ChangeRequest[];
+  }) => {
+    if (merged.projects) {
+      setProjects(merged.projects);
+      saveProjects(merged.projects);
+    }
+    if (merged.sprints) {
+      setSprints(merged.sprints);
+      saveSprints(merged.sprints);
+    }
+    if (merged.wbsItems) {
+      setWbsItems(merged.wbsItems);
+    }
+    if (merged.raidItems) {
+      setRaidItems(merged.raidItems);
+    }
+    if (merged.changeRequests) {
+      setChangeRequests(merged.changeRequests);
+    }
   };
 
   // Multi-Project Switching Handlers
@@ -111,6 +190,7 @@ export default function App() {
     setProjects((prev) => {
       const next = [newProj, ...prev];
       saveProjects(next);
+      pushServerState({ projects: next, sprints });
       return next;
     });
     setActiveProjectId(newProj.id);
@@ -129,6 +209,7 @@ export default function App() {
     setProjects((prev) => {
       const next = prev.map((p) => (p.id === updatedProject.id ? updatedProject : p));
       saveProjects(next);
+      pushServerState({ projects: next, sprints });
       return next;
     });
 
@@ -188,6 +269,7 @@ export default function App() {
     setProjects((prev) => {
       const next = prev.filter((p) => p.id !== projectId);
       saveProjects(next);
+      pushServerState({ projects: next, sprints });
       return next;
     });
 
@@ -228,6 +310,7 @@ export default function App() {
     setSprints((prev) => {
       const next = [newSprint, ...prev];
       saveSprints(next);
+      pushServerState({ projects, sprints: next });
       return next;
     });
     showToast(`Created sprint: ${newSprint.name} (${newSprint.projectGroup || "Project"})`);
@@ -243,6 +326,7 @@ export default function App() {
     setSprints((prev) => {
       const next = prev.map((s) => (s.id === updatedSprint.id ? updatedSprint : s));
       saveSprints(next);
+      pushServerState({ projects, sprints: next });
       return next;
     });
     // Synchronize associated work items with new sprint and project details
@@ -273,6 +357,7 @@ export default function App() {
     setSprints((prev) => {
       const next = prev.filter((s) => s.id !== sprintId);
       saveSprints(next);
+      pushServerState({ projects, sprints: next });
       return next;
     });
     if (selectedSprintId === sprintId) {
@@ -808,6 +893,7 @@ export default function App() {
         onOpenAiAssistant={() => {
           setActiveTab("documents");
         }}
+        onOpenSyncModal={() => setIsSyncModalOpen(true)}
         criticalRisksCount={criticalRisksCount}
         blockedWbsCount={blockedWbsCount}
         pendingCrCount={pendingCrCount}
@@ -827,6 +913,7 @@ export default function App() {
           projectContextData={projectContextData}
           onOpenMobileSidebar={() => setIsMobileSidebarOpen(true)}
           onUploadDocsClick={() => setActiveTab("documents")}
+          onOpenSyncModal={() => setIsSyncModalOpen(true)}
           projects={projects}
           sprints={sprints}
           activeProjectId={activeProjectId}
@@ -1060,6 +1147,20 @@ export default function App() {
           associatedWbsCount={wbsItems.filter((w) => w.sprintId === sprintToDelete.id).length}
         />
       )}
+
+      {/* Multi-Device & Mobile Sync Modal */}
+      <SyncModal
+        isOpen={isSyncModalOpen}
+        onClose={() => setIsSyncModalOpen(false)}
+        projects={projects}
+        sprints={sprints}
+        wbsItems={wbsItems}
+        raidItems={raidItems}
+        changeRequests={changeRequests}
+        stakeholders={stakeholders}
+        onApplyMergedData={handleApplyMergedData}
+        showToast={showToast}
+      />
     </div>
   );
 }

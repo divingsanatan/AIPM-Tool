@@ -9,6 +9,7 @@ import {
   Upload,
   AlertCircle,
   TrendingUp,
+  Cloud,
 } from "lucide-react";
 import { ActiveTab, EvmMetrics, ProjectSettings, Project, Sprint } from "../types";
 import { ProjectSwitcher } from "./ProjectSwitcher";
@@ -22,6 +23,7 @@ interface NavbarProps {
   projectContextData: any;
   onOpenMobileSidebar?: () => void;
   onUploadDocsClick?: () => void;
+  onOpenSyncModal?: () => void;
   projects?: Project[];
   sprints?: Sprint[];
   activeProjectId?: string;
@@ -41,6 +43,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   projectContextData,
   onOpenMobileSidebar,
   onUploadDocsClick,
+  onOpenSyncModal,
   projects = [],
   sprints = [],
   activeProjectId = "all",
@@ -166,7 +169,16 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
 
         {/* Right Action & Period Display */}
-        <div className="flex items-center space-x-3 sm:space-x-4 shrink-0">
+        <div className="flex items-center space-x-2 sm:space-x-3 shrink-0">
+          <button
+            onClick={onOpenSyncModal}
+            className="bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/30 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+            title="Sync projects across phone and desktop"
+          >
+            <Cloud className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">Sync Devices</span>
+          </button>
+
           <button
             onClick={onUploadDocsClick || (() => setActiveTab("documents"))}
             className="bg-[#38BDF8] hover:bg-[#0EA5E9] text-[#030712] px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
@@ -175,7 +187,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="hidden sm:inline">Upload Docs</span>
           </button>
 
-          <div className="hidden sm:block text-right font-mono border-l border-[#1E293B] pl-4">
+          <div className="hidden sm:block text-right font-mono border-l border-[#1E293B] pl-3">
             <p className="text-[10px] text-slate-400 uppercase tracking-wider">Report Period</p>
             <p className="text-[11px] font-bold text-white">Q3 - WEEK 12</p>
           </div>
