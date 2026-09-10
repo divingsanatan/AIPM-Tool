@@ -157,6 +157,9 @@ export interface ChangeRequest {
 
 export interface ProjectDocument {
   id: string;
+  projectId?: string;
+  projectName?: string;
+  projectIds?: string[];
   title: string;
   category: "WBS Specification" | "Project Charter" | "SOW" | "Risk Register" | "Change Package" | "WBS" | "Charter" | "Architecture" | "Requirements" | "Other" | string;
   uploadDate: string;

@@ -65,6 +65,40 @@ app.get("/api/state", (_req, res) => {
   }
 });
 
+function mergeEntitiesById<T extends { id?: string }>(
+  existingList: T[] = [],
+  incomingList: T[] = []
+): T[] {
+  if (!Array.isArray(incomingList) || incomingList.length === 0) {
+    return Array.isArray(existingList) ? existingList : [];
+  }
+  if (!Array.isArray(existingList) || existingList.length === 0) {
+    return incomingList;
+  }
+
+  const map = new Map<string, T>();
+  // Put existing items first
+  existingList.forEach((item) => {
+    if (item && item.id) {
+      map.set(item.id, item);
+    }
+  });
+
+  // Merge incoming items (updates attributes, or adds new item)
+  incomingList.forEach((item) => {
+    if (item && item.id) {
+      const prev = map.get(item.id);
+      if (prev) {
+        map.set(item.id, { ...prev, ...item });
+      } else {
+        map.set(item.id, item);
+      }
+    }
+  });
+
+  return Array.from(map.values());
+}
+
 app.post("/api/state", (req, res) => {
   try {
     const incoming = req.body;
@@ -77,10 +111,61 @@ app.post("/api/state", (req, res) => {
       }
     }
 
+    // Determine whether to do full replacement (e.g. on explicit deletion) or additive merge
+    const projects = incoming.replaceProjects
+      ? incoming.projects || existing.projects || []
+      : incoming.projects
+      ? mergeEntitiesById(existing.projects || [], incoming.projects)
+      : existing.projects || [];
+
+    const sprints = incoming.replaceSprints
+      ? incoming.sprints || existing.sprints || []
+      : incoming.sprints
+      ? mergeEntitiesById(existing.sprints || [], incoming.sprints)
+      : existing.sprints || [];
+
+    const wbsItems = incoming.replaceWbsItems
+      ? incoming.wbsItems || existing.wbsItems || []
+      : incoming.wbsItems
+      ? mergeEntitiesById(existing.wbsItems || [], incoming.wbsItems)
+      : existing.wbsItems || [];
+
+    const raidItems = incoming.replaceRaidItems
+      ? incoming.raidItems || existing.raidItems || []
+      : incoming.raidItems
+      ? mergeEntitiesById(existing.raidItems || [], incoming.raidItems)
+      : existing.raidItems || [];
+
+    const changeRequests = incoming.replaceChangeRequests
+      ? incoming.changeRequests || existing.changeRequests || []
+      : incoming.changeRequests
+      ? mergeEntitiesById(existing.changeRequests || [], incoming.changeRequests)
+      : existing.changeRequests || [];
+
+    const stakeholders = incoming.replaceStakeholders
+      ? incoming.stakeholders || existing.stakeholders || []
+      : incoming.stakeholders
+      ? mergeEntitiesById(existing.stakeholders || [], incoming.stakeholders)
+      : existing.stakeholders || [];
+
+    const documents = incoming.replaceDocuments
+      ? incoming.documents || existing.documents || []
+      : incoming.documents
+      ? mergeEntitiesById(existing.documents || [], incoming.documents)
+      : existing.documents || [];
+
     const merged = {
       ...existing,
       ...incoming,
+      projects,
+      sprints,
+      wbsItems,
+      raidItems,
+      changeRequests,
+      stakeholders,
+      documents,
       lastUpdated: new Date().toISOString(),
+      sourceDevice: incoming.sourceDevice || existing.sourceDevice || "web",
     };
 
     fs.writeFileSync(STATE_FILE, JSON.stringify(merged, null, 2), "utf-8");
@@ -89,6 +174,7 @@ app.post("/api/state", (req, res) => {
       lastUpdated: merged.lastUpdated,
       projectCount: merged.projects?.length || 0,
       sprintCount: merged.sprints?.length || 0,
+      projects: merged.projects,
     });
   } catch (err: any) {
     console.error("Error saving state file:", err);

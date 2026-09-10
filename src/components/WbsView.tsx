@@ -37,6 +37,7 @@ import {
   PlusCircle,
   Info,
   Play,
+  Cloud,
 } from "lucide-react";
 import {
   generateNextWbsChildCode,
@@ -81,6 +82,9 @@ interface WbsViewProps {
   onAddNewSprint?: (sprint: Sprint) => void;
   onSelectProject?: (id: string) => void;
   onSelectSprint?: (sprintId: string | null) => void;
+  onOpenSyncModal?: () => void;
+  onTriggerInstantSync?: () => void;
+  isSyncing?: boolean;
 }
 
 export const WbsView: React.FC<WbsViewProps> = ({
@@ -105,6 +109,9 @@ export const WbsView: React.FC<WbsViewProps> = ({
   onAddNewSprint,
   onSelectProject,
   onSelectSprint,
+  onOpenSyncModal,
+  onTriggerInstantSync,
+  isSyncing = false,
 }) => {
   const projects = useMemo(() => propProjects || loadProjects(), [propProjects]);
   const [filterStatus, setFilterStatus] = useState<string>("ALL");
@@ -448,6 +455,18 @@ export const WbsView: React.FC<WbsViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+            {(onOpenSyncModal || onTriggerInstantSync) && (
+              <button
+                type="button"
+                id="wbs-sync-devices-btn"
+                onClick={onTriggerInstantSync || onOpenSyncModal}
+                className="px-3 py-1.5 bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 hover:text-white border border-sky-500/40 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                title="Sync tasks across phone & browser"
+              >
+                <Cloud className={`h-3.5 w-3.5 text-sky-400 ${isSyncing ? "animate-spin" : ""}`} />
+                <span>{isSyncing ? "Syncing..." : "Sync Devices"}</span>
+              </button>
+            )}
             <button
               id="ai-parse-wbs-doc-btn"
               onClick={() => setIsAiDocParserOpen(true)}

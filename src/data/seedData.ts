@@ -1636,6 +1636,9 @@ export const initialRaciEntries: RaciMatrixEntry[] = [
 export const initialDocuments: ProjectDocument[] = [
   {
     id: "doc-1",
+    projectId: "proj-001",
+    projectIds: ["proj-001", "proj-flutter"],
+    projectName: "OmniChannel Banking Platform Modernization",
     title: "WBS Decomposition & Scope Baseline - OmniChannel Platform",
     category: "WBS Specification",
     uploadDate: "2026-03-01",
@@ -1665,6 +1668,9 @@ export const initialDocuments: ProjectDocument[] = [
   },
   {
     id: "doc-2",
+    projectId: "proj-001",
+    projectIds: ["proj-001", "proj-flutter"],
+    projectName: "OmniChannel Banking Platform Modernization",
     title: "Project Charter & Governance Framework",
     category: "Project Charter",
     uploadDate: "2026-02-01",

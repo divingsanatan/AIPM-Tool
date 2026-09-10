@@ -25,7 +25,6 @@ import {
   X,
   Pencil,
   Trash2,
-  Cloud,
 } from "lucide-react";
 import { ActiveTab, Project, Sprint, WbsItem, RaidItem, ChangeRequest } from "../types";
 
@@ -47,9 +46,12 @@ interface SidebarProps {
   onOpenCreateWorkItem?: () => void;
   onOpenAiAssistant?: () => void;
   onOpenSyncModal?: () => void;
+  onTriggerInstantSync?: () => void;
+  isSyncing?: boolean;
   criticalRisksCount?: number;
   blockedWbsCount?: number;
   pendingCrCount?: number;
+  documentsCount?: number;
   isOpenMobile?: boolean;
   onCloseMobile?: () => void;
   wbsItems?: WbsItem[];
@@ -75,9 +77,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenCreateWorkItem,
   onOpenAiAssistant,
   onOpenSyncModal,
+  onTriggerInstantSync,
+  isSyncing = false,
   criticalRisksCount = 0,
   blockedWbsCount = 0,
   pendingCrCount = 0,
+  documentsCount = 0,
   isOpenMobile = false,
   onCloseMobile,
   wbsItems,
@@ -181,8 +186,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: "Docs",
       icon: FileText,
       isActive: activeTab === "documents",
-      badgeCount: 0,
-      badgeColor: "",
+      badgeCount: documentsCount,
+      badgeColor: "bg-sky-500",
       onClick: () => setActiveTab("documents"),
     },
     {
@@ -261,23 +266,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           {/* Bottom Dock Controls */}
           <div className="w-full flex flex-col items-center pt-2 space-y-2 border-t border-[#242142]/70 mt-2">
-            {/* Multi-Device Cloud Sync Button */}
-            {onOpenSyncModal && (
-              <div className="flex flex-col items-center">
-                <button
-                  type="button"
-                  onClick={onOpenSyncModal}
-                  className="w-9 h-9 rounded-xl flex items-center justify-center transition-colors cursor-pointer text-sky-400 hover:text-sky-300 hover:bg-sky-500/15 border border-sky-500/30"
-                  title="Sync Phone & Cloud Projects"
-                >
-                  <Cloud className="w-4 h-4" />
-                </button>
-                <span className="text-[9px] font-medium text-sky-400 mt-0.5">
-                  Sync
-                </span>
-              </div>
-            )}
-
             {/* Project / Sprint Tree Toggle */}
             <button
               type="button"
@@ -321,19 +309,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
 
               <div className="flex items-center gap-1 text-slate-400">
-                {onOpenSyncModal && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (onCloseMobile) onCloseMobile();
-                      onOpenSyncModal();
-                    }}
-                    className="p-1 hover:text-sky-300 text-sky-400 hover:bg-[#1A2236] rounded transition-colors cursor-pointer"
-                    title="Sync Phone & Cloud"
-                  >
-                    <Cloud className="w-3.5 h-3.5" />
-                  </button>
-                )}
                 <button
                   type="button"
                   onClick={() => setActiveTab("documents")}
@@ -372,6 +347,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 >
                   <ChevronsLeft className="w-4 h-4" />
                 </button>
+
+                {/* Mobile Close Drawer Button */}
+                {onCloseMobile && (
+                  <button
+                    type="button"
+                    onClick={onCloseMobile}
+                    className="p-1 hover:text-white hover:bg-rose-500/20 text-slate-400 hover:text-rose-300 rounded transition-colors cursor-pointer md:hidden"
+                    title="Close Navigation"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
 
                 {/* Create '+' Button (ClickUp style) */}
                 <div className="relative ml-0.5">
@@ -781,25 +768,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <Plus className="w-3.5 h-3.5 text-indigo-400" />
                   <span>Create Project</span>
                 </button>
-
-                {onOpenSyncModal && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (onCloseMobile) onCloseMobile();
-                      onOpenSyncModal();
-                    }}
-                    className="w-full flex items-center justify-between px-2.5 py-2 text-xs text-sky-400 hover:text-sky-300 hover:bg-sky-500/10 rounded-lg transition-colors cursor-pointer"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Cloud className="w-3.5 h-3.5" />
-                      <span>Sync Phone & Cloud</span>
-                    </div>
-                    <span className="text-[10px] bg-sky-500/20 text-sky-300 px-1.5 py-0.5 rounded font-mono">
-                      Sync
-                    </span>
-                  </button>
-                )}
               </div>
             </div>
 

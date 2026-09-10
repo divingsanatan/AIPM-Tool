@@ -1,5 +1,5 @@
 import React, { useState, useRef } from "react";
-import { ProjectDocument, WbsItem } from "../types";
+import { ProjectDocument, WbsItem, Project } from "../types";
 import {
   FileText,
   Plus,
@@ -15,10 +15,15 @@ import {
   FolderOpen,
   UploadCloud,
   FileCheck,
+  FolderX,
 } from "lucide-react";
 
 interface DocumentsViewProps {
   documents: ProjectDocument[];
+  projects?: Project[];
+  activeProjectId?: string;
+  activeProject?: Project;
+  onSelectProject?: (projectId: string) => void;
   onAddDocument: (doc: ProjectDocument) => void;
   onDeleteDocument: (id: string) => void;
   onTriggerWbsImportFromDoc: (doc: ProjectDocument) => void;
@@ -26,6 +31,10 @@ interface DocumentsViewProps {
 
 export const DocumentsView: React.FC<DocumentsViewProps> = ({
   documents,
+  projects = [],
+  activeProjectId = "all",
+  activeProject,
+  onSelectProject,
   onAddDocument,
   onDeleteDocument,
   onTriggerWbsImportFromDoc,
@@ -33,11 +42,17 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedDoc, setSelectedDoc] = useState<ProjectDocument | null>(null);
 
+  const defaultProjId =
+    activeProjectId && activeProjectId !== "all"
+      ? activeProjectId
+      : projects[0]?.id || "proj-001";
+
   const [formData, setFormData] = useState<Partial<ProjectDocument>>({
     title: "",
     category: "WBS",
     content: "",
     uploadedBy: "Rachel Adams (Lead PM)",
+    projectId: defaultProjId,
   });
 
   const [isDragging, setIsDragging] = useState(false);
@@ -125,6 +140,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
       category: "WBS",
       content: "",
       uploadedBy: "Rachel Adams (Lead PM)",
+      projectId: defaultProjId,
     });
     setDroppedFile(null);
     setIsDragging(false);
@@ -137,13 +153,24 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
     e.preventDefault();
     if (!formData.title?.trim() || !formData.content?.trim()) return;
 
+    const targetProjId =
+      formData.projectId ||
+      (activeProjectId && activeProjectId !== "all"
+        ? activeProjectId
+        : projects[0]?.id || "proj-001");
+    const targetProj = projects.find((p) => p.id === targetProjId);
+
     const newDoc: ProjectDocument = {
       id: `doc-${Date.now()}`,
+      projectId: targetProjId,
+      projectName: targetProj?.name,
       title: formData.title.trim(),
       category: (formData.category as any) || "WBS",
       content: formData.content.trim(),
       uploadDate: new Date().toISOString().split("T")[0],
       uploadedBy: formData.uploadedBy || "Project Manager",
+      fileName: droppedFile?.name,
+      fileSize: droppedFile ? formatFileSize(droppedFile.size) : undefined,
       parsedToWbs: false,
     };
 
@@ -158,16 +185,31 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
       <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 sm:p-5 shadow-xs">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-sm font-bold text-white uppercase tracking-wider">
                 Project Document Repository & Artifacts
               </h2>
               <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#38BDF8]/15 text-[#38BDF8] border border-[#38BDF8]/30 font-mono">
                 PMBOK Artifact Baseline
               </span>
+              {activeProject ? (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[11px] font-semibold bg-[#141C2E] text-slate-200 border border-slate-700">
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: activeProject.color || "#38BDF8" }}
+                  />
+                  <span>Scoped: {activeProject.name}</span>
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[11px] font-semibold bg-[#141C2E] text-slate-300 border border-slate-700 font-mono">
+                  <span>Scope: All Projects (Portfolio)</span>
+                </span>
+              )}
             </div>
             <p className="text-xs text-[#94A3B8] mt-1">
-              Centralized storage for Project Charters, Statements of Work (SOW), and WBS documentation. Parse any document into live WBS deliverables using Gemini AI.
+              {activeProject
+                ? `Documents specifically attached to ${activeProject.name}. Upload Project Charters, Statements of Work (SOW), and WBS documentation to parse into live work packages.`
+                : "Centralized storage for Project Charters, Statements of Work (SOW), and WBS documentation across all projects."}
             </p>
           </div>
 
@@ -179,10 +221,11 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
                 category: "WBS",
                 content: "",
                 uploadedBy: "Rachel Adams (Lead PM)",
+                projectId: defaultProjId,
               });
               setIsAddModalOpen(true);
             }}
-            className="px-3 py-1.5 bg-[#38BDF8] hover:bg-[#0EA5E9] text-[#0F172A] text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+            className="px-3 py-1.5 bg-[#38BDF8] hover:bg-[#0EA5E9] text-[#0F172A] text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs shrink-0"
           >
             <Plus className="h-3.5 w-3.5" />
             <span>Add Project Document</span>
@@ -190,68 +233,117 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
         </div>
       </div>
 
-      {/* Document Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {documents.map((doc) => (
-          <div
-            key={doc.id}
-            className="bg-[#0B0F19] border border-[#1E293B] hover:border-slate-700 rounded-xl p-4 sm:p-5 flex flex-col justify-between transition-colors group shadow-xs"
-          >
-            <div>
-              <div className="flex items-start justify-between gap-2">
-                <div className="p-1.5 rounded-lg bg-[#38BDF8]/15 text-[#38BDF8] border border-[#38BDF8]/30">
-                  <FileText className="h-4 w-4" />
-                </div>
-                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#060911] text-slate-400 border border-[#1E293B] font-mono">
-                  {doc.category}
-                </span>
-              </div>
-
-              <h3 className="text-xs font-bold text-white mt-3 line-clamp-1 group-hover:text-[#38BDF8] transition-colors">
-                {doc.title}
-              </h3>
-              <p className="text-xs text-[#94A3B8] mt-1 line-clamp-3 leading-relaxed font-sans">
-                {doc.content}
-              </p>
-            </div>
-
-            <div className="mt-4 pt-3 border-t border-[#1E293B] flex items-center justify-between text-xs">
-              <div className="text-[10px] text-[#64748B] font-mono">
-                {doc.uploadDate} • {doc.uploadedBy}
-              </div>
-
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setSelectedDoc(doc)}
-                  className="p-1.5 rounded text-[#94A3B8] hover:text-white hover:bg-[#141C2E] transition-colors cursor-pointer"
-                  title="View Document"
-                >
-                  <Eye className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  onClick={() => onTriggerWbsImportFromDoc(doc)}
-                  className="px-2 py-1 rounded bg-[#38BDF8]/15 hover:bg-[#38BDF8]/25 text-[#38BDF8] border border-[#38BDF8]/30 text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer font-mono"
-                  title="Deconstruct into WBS items with AI"
-                >
-                  <Sparkles className="h-3 w-3" />
-                  <span>Parse WBS</span>
-                </button>
-                <button
-                  onClick={() => {
-                    if (confirm(`Delete document "${doc.title}"?`)) {
-                      onDeleteDocument(doc.id);
-                    }
-                  }}
-                  className="p-1.5 rounded text-[#94A3B8] hover:text-rose-400 hover:bg-[#141C2E] transition-colors cursor-pointer"
-                  title="Delete Document"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </div>
+      {/* Document Grid or Empty State */}
+      {documents.length === 0 ? (
+        <div className="bg-[#0B0F19] border border-[#1E293B] rounded-2xl p-10 sm:p-14 text-center flex flex-col items-center justify-center shadow-xs">
+          <div className="w-14 h-14 rounded-2xl bg-sky-500/10 border border-sky-500/20 text-sky-400 flex items-center justify-center mb-4 shadow-xs">
+            <FolderOpen className="w-7 h-7" />
           </div>
-        ))}
-      </div>
+          <h3 className="text-base font-bold text-white mb-2">
+            No Documents in {activeProject ? activeProject.name : "this Project"}
+          </h3>
+          <p className="text-xs text-[#94A3B8] max-w-md mb-6 leading-relaxed">
+            This project has no pre-loaded documents. Upload or paste a Project Charter, SOW, Architecture Blueprint, or WBS specification to baseline scope and extract work packages with Gemini AI.
+          </p>
+          <button
+            onClick={() => {
+              setFormData({
+                title: "",
+                category: "WBS",
+                content: "",
+                uploadedBy: "Rachel Adams (Lead PM)",
+                projectId: defaultProjId,
+              });
+              setIsAddModalOpen(true);
+            }}
+            className="px-4 py-2 bg-sky-400 hover:bg-sky-300 text-slate-950 text-xs font-bold rounded-xl flex items-center gap-2 transition-colors cursor-pointer shadow-md"
+          >
+            <UploadCloud className="h-4 w-4" />
+            <span>Upload First Document</span>
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {documents.map((doc) => {
+            const docProject =
+              projects.find((p) => p.id === doc.projectId) ||
+              (doc.projectIds && doc.projectIds.length > 0
+                ? projects.find((p) => doc.projectIds?.includes(p.id))
+                : undefined);
+
+            return (
+              <div
+                key={doc.id}
+                className="bg-[#0B0F19] border border-[#1E293B] hover:border-slate-700 rounded-xl p-4 sm:p-5 flex flex-col justify-between transition-colors group shadow-xs"
+              >
+                <div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="p-1.5 rounded-lg bg-[#38BDF8]/15 text-[#38BDF8] border border-[#38BDF8]/30">
+                      <FileText className="h-4 w-4" />
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                      {docProject && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-[#141C2E] text-slate-300 border border-slate-700">
+                          <span
+                            className="w-1.5 h-1.5 rounded-full"
+                            style={{ backgroundColor: docProject.color || "#38BDF8" }}
+                          />
+                          <span className="truncate max-w-[120px]">{docProject.name}</span>
+                        </span>
+                      )}
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#060911] text-slate-400 border border-[#1E293B] font-mono">
+                        {doc.category}
+                      </span>
+                    </div>
+                  </div>
+
+                  <h3 className="text-xs font-bold text-white mt-3 line-clamp-1 group-hover:text-[#38BDF8] transition-colors">
+                    {doc.title}
+                  </h3>
+                  <p className="text-xs text-[#94A3B8] mt-1 line-clamp-3 leading-relaxed font-sans">
+                    {doc.content}
+                  </p>
+                </div>
+
+                <div className="mt-4 pt-3 border-t border-[#1E293B] flex items-center justify-between text-xs">
+                  <div className="text-[10px] text-[#64748B] font-mono">
+                    {doc.uploadDate} • {doc.uploadedBy}
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setSelectedDoc(doc)}
+                      className="p-1.5 rounded text-[#94A3B8] hover:text-white hover:bg-[#141C2E] transition-colors cursor-pointer"
+                      title="View Document"
+                    >
+                      <Eye className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => onTriggerWbsImportFromDoc(doc)}
+                      className="px-2 py-1 rounded bg-[#38BDF8]/15 hover:bg-[#38BDF8]/25 text-[#38BDF8] border border-[#38BDF8]/30 text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer font-mono"
+                      title="Deconstruct into WBS items with AI"
+                    >
+                      <Sparkles className="h-3 w-3" />
+                      <span>Parse WBS</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (confirm(`Delete document "${doc.title}"?`)) {
+                          onDeleteDocument(doc.id);
+                        }
+                      }}
+                      className="p-1.5 rounded text-[#94A3B8] hover:text-rose-400 hover:bg-[#141C2E] transition-colors cursor-pointer"
+                      title="Delete Document"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Add Document Modal with Drag-and-Drop File Upload */}
       {isAddModalOpen && (
@@ -366,6 +458,25 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
                       Clear
                     </button>
                   </div>
+                </div>
+              )}
+
+              {projects.length > 0 && (
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1 font-mono text-xs">
+                    Target Project *
+                  </label>
+                  <select
+                    value={formData.projectId || defaultProjId}
+                    onChange={(e) => setFormData({ ...formData, projectId: e.target.value })}
+                    className="w-full bg-[#060911] border border-[#1E293B] focus:border-sky-400 focus:outline-hidden rounded-lg px-3 py-2 text-white text-xs"
+                  >
+                    {projects.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} ({p.projectCode})
+                      </option>
+                    ))}
+                  </select>
                 </div>
               )}
 

@@ -9,7 +9,6 @@ import {
   Upload,
   AlertCircle,
   TrendingUp,
-  Cloud,
 } from "lucide-react";
 import { ActiveTab, EvmMetrics, ProjectSettings, Project, Sprint } from "../types";
 import { ProjectSwitcher } from "./ProjectSwitcher";
@@ -24,6 +23,8 @@ interface NavbarProps {
   onOpenMobileSidebar?: () => void;
   onUploadDocsClick?: () => void;
   onOpenSyncModal?: () => void;
+  onTriggerInstantSync?: () => void;
+  isSyncing?: boolean;
   projects?: Project[];
   sprints?: Sprint[];
   activeProjectId?: string;
@@ -44,6 +45,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenMobileSidebar,
   onUploadDocsClick,
   onOpenSyncModal,
+  onTriggerInstantSync,
+  isSyncing = false,
   projects = [],
   sprints = [],
   activeProjectId = "all",
@@ -185,18 +188,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             title="Ask AI PM"
           >
             <Sparkles className="w-4 h-4 text-sky-400" />
-          </button>
-
-          {/* Sync Devices Button - Prominently visible on both mobile and desktop */}
-          <button
-            id="sync-devices-nav-btn"
-            onClick={onOpenSyncModal}
-            className="bg-sky-500/15 hover:bg-sky-500/25 active:scale-95 text-sky-300 border border-sky-500/40 px-2 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 shrink-0"
-            title="Sync projects across phone and desktop"
-          >
-            <Cloud className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-            <span className="font-bold">Sync</span>
-            <span className="hidden md:inline text-sky-300/80">Devices</span>
           </button>
 
           {/* Upload Docs Button */}

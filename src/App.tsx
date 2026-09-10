@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import {
   WbsItem,
   Stakeholder,
@@ -30,6 +30,7 @@ import {
 } from "./utils/statusConfig";
 import { loadProjects, saveProjects, loadActiveProjectId, saveActiveProjectId } from "./data/projectsData";
 import { loadSprints, saveSprints } from "./data/sprintsData";
+import { loadDocuments, saveDocuments } from "./data/documentsData";
 import { CreateProjectModal } from "./components/CreateProjectModal";
 import { CreateSprintModal } from "./components/CreateSprintModal";
 import { DeleteSprintModal } from "./components/DeleteSprintModal";
@@ -50,6 +51,10 @@ import {
   pushServerState,
   mergeProjects,
   mergeSprints,
+  syncBidirectional,
+  notifySyncChannel,
+  syncBroadcastChannel,
+  SyncPayload,
 } from "./utils/cloudSync";
 import { CheckCircle2, X } from "lucide-react";
 
@@ -75,7 +80,7 @@ export default function App() {
   const [stakeholders, setStakeholders] = useState<Stakeholder[]>(initialStakeholders);
   const [raidItems, setRaidItems] = useState<RaidItem[]>(initialRaidItems);
   const [changeRequests, setChangeRequests] = useState<ChangeRequest[]>(initialChangeRequests);
-  const [documents, setDocuments] = useState<ProjectDocument[]>(initialDocuments);
+  const [documents, setDocuments] = useState<ProjectDocument[]>(() => loadDocuments());
   const [raciEntries, setRaciEntries] = useState<RaciMatrixEntry[]>(initialRaciEntries);
   const [statusConfigs, setStatusConfigs] = useState<StatusConfig[]>(() => loadStatusConfigs());
 
@@ -88,50 +93,122 @@ export default function App() {
     }, 4000);
   };
 
-  // Centralized Server Sync: automatically checks and merges cloud projects on mount
-  useEffect(() => {
-    let isMounted = true;
-    async function initServerSync() {
-      try {
-        const serverState = await fetchServerState();
-        if (!isMounted || !serverState) return;
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(() =>
+    new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+  );
 
-        if (serverState.projects && serverState.projects.length > 0) {
-          setProjects((prev) => {
-            const merged = mergeProjects(prev, serverState.projects!);
-            saveProjects(merged);
-            return merged;
-          });
-        } else {
-          // Push initial local projects to server so other devices can pull them
-          const localProjects = loadProjects();
-          const localSprints = loadSprints();
-          pushServerState({
-            projects: localProjects,
-            sprints: localSprints,
-            wbsItems,
-            raidItems,
-            changeRequests,
-            stakeholders,
-          });
+  // Centralized Multi-Device Synchronization Engine
+  const performSync = useCallback(
+    async (isSilent: boolean = false, forcePush: boolean = false) => {
+      setIsSyncing(true);
+      try {
+        const currentPayload: SyncPayload = {
+          projects: loadProjects(),
+          sprints: loadSprints(),
+          wbsItems,
+          raidItems,
+          changeRequests,
+          stakeholders,
+          documents: loadDocuments(),
+        };
+
+        const result = await syncBidirectional(currentPayload, forcePush);
+        const { merged, hasChanges } = result;
+
+        if (merged.projects && merged.projects.length > 0) {
+          setProjects(merged.projects);
+          saveProjects(merged.projects);
+        }
+        if (merged.sprints && merged.sprints.length > 0) {
+          setSprints(merged.sprints);
+          saveSprints(merged.sprints);
+        }
+        if (merged.wbsItems && merged.wbsItems.length > 0) {
+          setWbsItems(merged.wbsItems);
+        }
+        if (merged.raidItems && merged.raidItems.length > 0) {
+          setRaidItems(merged.raidItems);
+        }
+        if (merged.changeRequests && merged.changeRequests.length > 0) {
+          setChangeRequests(merged.changeRequests);
+        }
+        if (merged.documents && merged.documents.length > 0) {
+          setDocuments(merged.documents);
+          saveDocuments(merged.documents);
         }
 
-        if (serverState.sprints && serverState.sprints.length > 0) {
-          setSprints((prev) => {
-            const merged = mergeSprints(prev, serverState.sprints!);
-            saveSprints(merged);
-            return merged;
-          });
+        setLastSyncTime(
+          new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        );
+
+        if (!isSilent) {
+          if (hasChanges) {
+            showToast(
+              `Synced! Updated projects & tasks across your devices (${merged.projects?.length || 0} projects)`
+            );
+          } else {
+            showToast(`All devices in sync (${merged.projects?.length || 0} projects)`);
+          }
         }
       } catch (err) {
-        console.warn("Server sync check failed:", err);
+        console.warn("Device sync error:", err);
+        if (!isSilent) {
+          showToast("Sync attempted — check internet connection or server status");
+        }
+      } finally {
+        setIsSyncing(false);
       }
-    }
-    initServerSync();
-    return () => {
-      isMounted = false;
+    },
+    [wbsItems, raidItems, changeRequests, stakeholders]
+  );
+
+  // Automated background sync: on mount, on window focus, on visibility change, and on interval
+  useEffect(() => {
+    // Initial sync on mount
+    performSync(true);
+
+    // Sync when returning to this browser window (e.g. after adding project on mobile phone)
+    const handleFocus = () => {
+      performSync(true);
     };
-  }, []);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        performSync(true);
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    // Periodic polling every 12 seconds
+    const intervalId = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        performSync(true);
+      }
+    }, 12000);
+
+    // Cross-tab broadcast channel listener
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data && event.data.type === "STATE_UPDATED") {
+        performSync(true);
+      }
+    };
+
+    if (syncBroadcastChannel) {
+      syncBroadcastChannel.addEventListener("message", handleMessage);
+    }
+
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      clearInterval(intervalId);
+      if (syncBroadcastChannel) {
+        syncBroadcastChannel.removeEventListener("message", handleMessage);
+      }
+    };
+  }, [performSync]);
 
   const handleApplyMergedData = (merged: {
     projects?: Project[];
@@ -187,16 +264,29 @@ export default function App() {
   };
 
   const handleAddNewProject = (newProj: Project) => {
+    let nextProjects: Project[] = [];
     setProjects((prev) => {
-      const next = [newProj, ...prev];
-      saveProjects(next);
-      pushServerState({ projects: next, sprints });
-      return next;
+      nextProjects = [newProj, ...prev];
+      saveProjects(nextProjects);
+      return nextProjects;
     });
     setActiveProjectId(newProj.id);
     saveActiveProjectId(newProj.id);
     setSelectedSprintId(null);
     showToast(`Created new project: ${newProj.name}. Active workspace updated.`);
+
+    // Persist full state to server and broadcast to all devices immediately
+    pushServerState({
+      projects: nextProjects,
+      sprints,
+      wbsItems,
+      raidItems,
+      changeRequests,
+      stakeholders,
+      lastUpdated: new Date().toISOString(),
+    }).then(() => {
+      notifySyncChannel({ projects: nextProjects });
+    });
   };
 
   const handleOpenEditProject = (project: Project) => {
@@ -206,23 +296,24 @@ export default function App() {
 
   const handleUpdateProject = (updatedProject: Project) => {
     const oldProject = projects.find((p) => p.id === updatedProject.id);
+    let nextProjects: Project[] = [];
     setProjects((prev) => {
-      const next = prev.map((p) => (p.id === updatedProject.id ? updatedProject : p));
-      saveProjects(next);
-      pushServerState({ projects: next, sprints });
-      return next;
+      nextProjects = prev.map((p) => (p.id === updatedProject.id ? updatedProject : p));
+      saveProjects(nextProjects);
+      return nextProjects;
     });
 
+    let nextSprints = sprints;
     // If project name changed, sync associated sprints & work items
     if (oldProject && oldProject.name !== updatedProject.name) {
       setSprints((prev) => {
-        const next = prev.map((s) =>
+        nextSprints = prev.map((s) =>
           s.projectId === updatedProject.id || s.projectGroup === oldProject.name
             ? { ...s, projectGroup: updatedProject.name, projectId: updatedProject.id }
             : s
         );
-        saveSprints(next);
-        return next;
+        saveSprints(nextSprints);
+        return nextSprints;
       });
 
       setWbsItems((prev) => {
@@ -234,6 +325,18 @@ export default function App() {
         return calculateWbsHierarchyRollups(updated, stakeholders).rolledUpItems;
       });
     }
+
+    pushServerState({
+      projects: nextProjects,
+      sprints: nextSprints,
+      wbsItems,
+      raidItems,
+      changeRequests,
+      stakeholders,
+      lastUpdated: new Date().toISOString(),
+    }).then(() => {
+      notifySyncChannel({ projects: nextProjects });
+    });
 
     // If currently active, sync projectSettings
     if (activeProjectId === updatedProject.id) {
@@ -266,19 +369,14 @@ export default function App() {
     const project = projects.find((p) => p.id === projectId);
     const projectName = project?.name || "Project";
 
-    setProjects((prev) => {
-      const next = prev.filter((p) => p.id !== projectId);
-      saveProjects(next);
-      pushServerState({ projects: next, sprints });
-      return next;
-    });
+    const nextProjects = projects.filter((p) => p.id !== projectId);
+    setProjects(nextProjects);
+    saveProjects(nextProjects);
 
     // Remove or unlink associated sprints
-    setSprints((prev) => {
-      const next = prev.filter((s) => s.projectId !== projectId && s.projectGroup !== projectName);
-      saveSprints(next);
-      return next;
-    });
+    const nextSprints = sprints.filter((s) => s.projectId !== projectId && s.projectGroup !== projectName);
+    setSprints(nextSprints);
+    saveSprints(nextSprints);
 
     // Unlink work items associated with deleted project
     setWbsItems((prev) => {
@@ -296,6 +394,17 @@ export default function App() {
       saveActiveProjectId("all");
       setSelectedSprintId(null);
     }
+
+    // Pass replaceProjects: true so the deleted project is actually removed from the backend
+    pushServerState({
+      projects: nextProjects,
+      sprints: nextSprints,
+      replaceProjects: true,
+      replaceSprints: true,
+      lastUpdated: new Date().toISOString(),
+    }).then(() => {
+      notifySyncChannel({ projects: nextProjects });
+    });
 
     setProjectToDelete(null);
     if (projectToEdit?.id === projectId) {
@@ -534,6 +643,25 @@ export default function App() {
     if (activeProjectId === "all") return sprints;
     return sprints.filter((s) => s.projectId === activeProjectId);
   }, [sprints, activeProjectId]);
+
+  const filteredDocuments = useMemo(() => {
+    if (activeProjectId === "all") {
+      return documents;
+    }
+    return documents.filter((doc) => {
+      if (doc.projectId) {
+        return doc.projectId === activeProjectId;
+      }
+      if (doc.projectIds && doc.projectIds.length > 0) {
+        return doc.projectIds.includes(activeProjectId);
+      }
+      // Demo seed documents only match the initial demo projects
+      if (doc.id === "doc-1" || doc.id === "doc-2") {
+        return activeProjectId === "proj-001" || activeProjectId === "proj-flutter";
+      }
+      return false;
+    });
+  }, [documents, activeProjectId]);
 
   const activeProject = useMemo(() => {
     if (activeProjectId === "all") return null;
@@ -785,13 +913,64 @@ export default function App() {
 
   // Documents CRUD
   const handleAddDocument = (doc: ProjectDocument) => {
-    setDocuments((prev) => [doc, ...prev]);
+    const targetProjId =
+      doc.projectId ||
+      (activeProjectId !== "all" ? activeProjectId : projects[0]?.id || "proj-001");
+    const targetProj = projects.find((p) => p.id === targetProjId);
+    const enrichedDoc: ProjectDocument = {
+      ...doc,
+      projectId: targetProjId,
+      projectName: doc.projectName || targetProj?.name,
+    };
+
+    let nextDocs: ProjectDocument[] = [];
+    setDocuments((prev) => {
+      nextDocs = [enrichedDoc, ...prev];
+      saveDocuments(nextDocs);
+      return nextDocs;
+    });
     showToast(`Added document: ${doc.title}`);
+
+    pushServerState({
+      projects: loadProjects(),
+      sprints: loadSprints(),
+      wbsItems,
+      raidItems,
+      changeRequests,
+      stakeholders,
+      documents: nextDocs,
+      lastUpdated: new Date().toISOString(),
+    }).then(() => {
+      notifySyncChannel({ documents: nextDocs });
+    }).catch((err) => {
+      console.warn("Could not sync document:", err);
+    });
   };
 
   const handleDeleteDocument = (id: string) => {
-    setDocuments((prev) => prev.filter((d) => d.id !== id));
+    let nextDocs: ProjectDocument[] = [];
+    setDocuments((prev) => {
+      nextDocs = prev.filter((d) => d.id !== id);
+      saveDocuments(nextDocs);
+      return nextDocs;
+    });
     showToast("Document deleted.");
+
+    pushServerState({
+      projects: loadProjects(),
+      sprints: loadSprints(),
+      wbsItems,
+      raidItems,
+      changeRequests,
+      stakeholders,
+      documents: nextDocs,
+      replaceDocuments: true,
+      lastUpdated: new Date().toISOString(),
+    }).then(() => {
+      notifySyncChannel({ documents: nextDocs });
+    }).catch((err) => {
+      console.warn("Could not sync document deletion:", err);
+    });
   };
 
   const handleTriggerWbsImportFromDoc = (doc: ProjectDocument) => {
@@ -894,9 +1073,12 @@ export default function App() {
           setActiveTab("documents");
         }}
         onOpenSyncModal={() => setIsSyncModalOpen(true)}
+        onTriggerInstantSync={() => performSync(false)}
+        isSyncing={isSyncing}
         criticalRisksCount={criticalRisksCount}
         blockedWbsCount={blockedWbsCount}
         pendingCrCount={pendingCrCount}
+        documentsCount={filteredDocuments.length}
         isOpenMobile={isMobileSidebarOpen}
         onCloseMobile={() => setIsMobileSidebarOpen(false)}
       />
@@ -914,6 +1096,8 @@ export default function App() {
           onOpenMobileSidebar={() => setIsMobileSidebarOpen(true)}
           onUploadDocsClick={() => setActiveTab("documents")}
           onOpenSyncModal={() => setIsSyncModalOpen(true)}
+          onTriggerInstantSync={() => performSync(false)}
+          isSyncing={isSyncing}
           projects={projects}
           sprints={sprints}
           activeProjectId={activeProjectId}
@@ -945,6 +1129,10 @@ export default function App() {
               onGenerateReportClick={(type) => {
                 setActiveTab("reports");
               }}
+              onOpenSyncModal={() => setIsSyncModalOpen(true)}
+              onTriggerInstantSync={() => performSync(false)}
+              isSyncing={isSyncing}
+              lastSyncTime={lastSyncTime}
               projects={projects}
               sprints={sprints}
               activeProjectId={activeProjectId}
@@ -962,7 +1150,7 @@ export default function App() {
             <WbsView
               wbsItems={filteredWbsItems}
               stakeholders={filteredStakeholders}
-              documents={documents}
+              documents={filteredDocuments}
               onAddWbsItem={handleAddWbsItem}
               onUpdateWbsItem={handleUpdateWbsItem}
               onDeleteWbsItem={handleDeleteWbsItem}
@@ -979,6 +1167,9 @@ export default function App() {
               onAddNewSprint={handleAddNewSprint}
               onSelectProject={handleSelectProject}
               onSelectSprint={handleSelectSprint}
+              onOpenSyncModal={() => setIsSyncModalOpen(true)}
+              onTriggerInstantSync={() => performSync(false)}
+              isSyncing={isSyncing}
             />
           )}
 
@@ -1044,7 +1235,11 @@ export default function App() {
 
           {activeTab === "documents" && (
             <DocumentsView
-              documents={documents}
+              documents={filteredDocuments}
+              projects={projects}
+              activeProjectId={activeProjectId}
+              activeProject={activeProject}
+              onSelectProject={handleSelectProject}
               onAddDocument={handleAddDocument}
               onDeleteDocument={handleDeleteDocument}
               onTriggerWbsImportFromDoc={handleTriggerWbsImportFromDoc}

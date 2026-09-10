@@ -34,6 +34,8 @@ import {
   Pencil,
   Trash2,
   X,
+  Cloud,
+  RefreshCw,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -82,6 +84,10 @@ interface DashboardViewProps {
   onDeleteSprint?: (sprint: Sprint) => void;
   onOpenEditProject?: (project: Project) => void;
   onDeleteProject?: (project: Project) => void;
+  onOpenSyncModal?: () => void;
+  onTriggerInstantSync?: () => void;
+  isSyncing?: boolean;
+  lastSyncTime?: Date | null;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -105,6 +111,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onDeleteSprint,
   onOpenEditProject,
   onDeleteProject,
+  onOpenSyncModal,
+  onTriggerInstantSync,
+  isSyncing = false,
+  lastSyncTime = null,
 }) => {
   const [wbsFilter, setWbsFilter] = useState<string>("All");
   const [showAllWbs, setShowAllWbs] = useState<boolean>(false);
@@ -369,6 +379,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         <div className="flex items-center gap-2 shrink-0 flex-wrap">
           <button
+            type="button"
+            id="dashboard-header-sync-btn"
+            onClick={onTriggerInstantSync || onOpenSyncModal}
+            className="text-xs font-mono font-medium text-sky-300 hover:text-white px-3 py-1.5 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs"
+            title="Synchronize projects across all devices"
+          >
+            <Cloud className={`w-3.5 h-3.5 text-sky-400 ${isSyncing ? "animate-spin" : ""}`} />
+            <span>{isSyncing ? "Syncing..." : "Sync Devices"}</span>
+          </button>
+          <button
             onClick={() => onNavigateTab("wbs")}
             className="text-xs font-mono text-slate-300 hover:text-white px-3 py-1.5 rounded-lg bg-[#141C2E] border border-slate-800 hover:border-slate-700 transition-colors cursor-pointer flex items-center gap-1.5"
           >
@@ -386,21 +406,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* Single Project Selection Dropdown & Multi-Sprint Rollup Scope */}
-      <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl px-4 py-3 shadow-xs">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          {/* Project Dropdown */}
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 font-mono uppercase tracking-wider">
+      <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl px-3 sm:px-4 py-3 shadow-xs">
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
+          {/* Project Dropdown & Scope Actions */}
+          <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap min-w-0">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 font-mono uppercase tracking-wider shrink-0">
               <Folder className="w-4 h-4 text-indigo-400" />
               <span>Project Scope:</span>
             </div>
 
-            <div className="relative min-w-[240px] sm:min-w-[320px]">
+            <div className="relative w-full sm:w-auto min-w-0 sm:min-w-[260px] md:min-w-[300px]">
               <select
                 id="dashboard-project-filter"
                 value={activeProjectId}
                 onChange={(e) => handleScopeProjectChange(e.target.value)}
-                className="w-full bg-[#141C2E] border border-slate-700 hover:border-indigo-500 rounded-lg px-3 py-2 text-xs font-medium text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer shadow-xs"
+                className="w-full bg-[#141C2E] border border-slate-700 hover:border-indigo-500 rounded-lg px-3 py-2 text-xs font-medium text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer shadow-xs truncate"
               >
                 <option value="all" className="bg-[#101625] text-white font-semibold">
                   🌐 All Projects (Enterprise Portfolio)
@@ -413,43 +433,80 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </select>
             </div>
 
-            {activeProjectId !== "all" && (
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {selectedProjectObj && onOpenEditProject && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {activeProjectId !== "all" && (
+                <>
+                  {selectedProjectObj && onOpenEditProject && (
+                    <button
+                      type="button"
+                      id="dashboard-edit-project-btn"
+                      onClick={() => onOpenEditProject(selectedProjectObj)}
+                      className="px-2.5 py-1.5 rounded-lg text-xs text-amber-300 hover:text-white bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 flex items-center gap-1.5 transition-colors cursor-pointer"
+                      title={`Edit ${selectedProjectObj.name}`}
+                    >
+                      <Pencil className="w-3 h-3" />
+                      <span>Edit</span>
+                    </button>
+                  )}
+
+                  {selectedProjectObj && onDeleteProject && (
+                    <button
+                      type="button"
+                      id="dashboard-delete-project-btn"
+                      onClick={() => onDeleteProject(selectedProjectObj)}
+                      className="px-2.5 py-1.5 rounded-lg text-xs text-rose-300 hover:text-white bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 flex items-center gap-1.5 transition-colors cursor-pointer"
+                      title={`Delete ${selectedProjectObj.name}`}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>Delete</span>
+                    </button>
+                  )}
+
                   <button
                     type="button"
-                    onClick={() => onOpenEditProject(selectedProjectObj)}
-                    className="px-2.5 py-1.5 rounded-lg text-xs text-amber-300 hover:text-white bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 flex items-center gap-1.5 transition-colors cursor-pointer"
-                    title={`Edit ${selectedProjectObj.name}`}
+                    id="dashboard-reset-scope-btn"
+                    onClick={() => handleScopeProjectChange("all")}
+                    className="px-2.5 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white bg-[#141C2E] hover:bg-[#1A253D] border border-slate-800 flex items-center gap-1 transition-colors cursor-pointer"
+                    title="Reset to All Projects"
                   >
-                    <Pencil className="w-3 h-3" />
-                    <span>Edit Project</span>
+                    <RotateCcw className="w-3 h-3" />
+                    <span>All</span>
                   </button>
-                )}
+                </>
+              )}
 
-                {selectedProjectObj && onDeleteProject && (
-                  <button
-                    type="button"
-                    onClick={() => onDeleteProject(selectedProjectObj)}
-                    className="px-2.5 py-1.5 rounded-lg text-xs text-rose-300 hover:text-white bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 flex items-center gap-1.5 transition-colors cursor-pointer"
-                    title={`Delete ${selectedProjectObj.name}`}
-                  >
-                    <Trash2 className="w-3 h-3" />
-                    <span>Delete</span>
-                  </button>
-                )}
+              {/* Dedicated High-Visibility Sync Devices Button */}
+              <button
+                type="button"
+                id="dashboard-sync-devices-scope-btn"
+                onClick={onTriggerInstantSync || onOpenSyncModal}
+                className="px-3 py-1.5 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 hover:text-white border border-sky-500/40 hover:border-sky-400 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs active:scale-95"
+                title="Synchronize projects and tasks across all devices (phone & browser)"
+              >
+                <Cloud className={`w-3.5 h-3.5 text-sky-400 ${isSyncing ? "animate-spin" : ""}`} />
+                <span>Sync Devices</span>
+                <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-[#0E1726] border border-sky-600/30 font-mono text-sky-300">
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      isSyncing ? "bg-amber-400 animate-ping" : "bg-emerald-400"
+                    }`}
+                  />
+                  {isSyncing ? "Syncing..." : "Live"}
+                </span>
+              </button>
 
+              {onOpenSyncModal && (
                 <button
                   type="button"
-                  onClick={() => handleScopeProjectChange("all")}
-                  className="px-2.5 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white bg-[#141C2E] hover:bg-[#1A253D] border border-slate-800 flex items-center gap-1 transition-colors cursor-pointer"
-                  title="Reset to All Projects"
+                  id="dashboard-sync-details-btn"
+                  onClick={onOpenSyncModal}
+                  className="px-2 py-1.5 rounded-lg text-[11px] text-slate-400 hover:text-slate-200 bg-[#141C2E] hover:bg-[#1A253D] border border-slate-800 transition-colors cursor-pointer"
+                  title="Configure Cloud & Device Sync"
                 >
-                  <RotateCcw className="w-3 h-3" />
-                  <span>Reset to All</span>
+                  Details
                 </button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           {/* Scope Context Metrics */}
