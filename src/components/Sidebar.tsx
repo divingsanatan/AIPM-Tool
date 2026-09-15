@@ -2,7 +2,6 @@ import React, { useState } from "react";
 import {
   BarChart3,
   Layers,
-  GanttChart,
   Users,
   ShieldAlert,
   Grid,
@@ -143,18 +142,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       badgeColor: "bg-rose-500",
       onClick: () => {
         setActiveTab("wbs");
-        if (isTreeCollapsed) setIsTreeCollapsed(false);
-      },
-    },
-    {
-      id: "gantt" as ActiveTab,
-      label: "Gantt",
-      icon: GanttChart,
-      isActive: activeTab === "gantt",
-      badgeCount: 0,
-      badgeColor: "",
-      onClick: () => {
-        setActiveTab("gantt");
         if (isTreeCollapsed) setIsTreeCollapsed(false);
       },
     },
