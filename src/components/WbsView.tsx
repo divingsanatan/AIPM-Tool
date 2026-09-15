@@ -460,11 +460,11 @@ export const WbsView: React.FC<WbsViewProps> = ({
                 type="button"
                 id="wbs-sync-devices-btn"
                 onClick={onTriggerInstantSync || onOpenSyncModal}
-                className="px-3 py-1.5 bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 hover:text-white border border-sky-500/40 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 min-w-[120px] h-8 text-xs font-semibold rounded-lg bg-[#141C2E] hover:bg-[#1E293B] text-sky-300 hover:text-white border border-sky-500/30 hover:border-sky-500/60 transition-colors cursor-pointer shadow-xs select-none whitespace-nowrap"
                 title="Sync tasks across phone & browser"
               >
-                <Cloud className={`h-3.5 w-3.5 text-sky-400 ${isSyncing ? "animate-spin" : ""}`} />
-                <span>{isSyncing ? "Syncing..." : "Sync Devices"}</span>
+                <Cloud className="h-3.5 w-3.5 text-sky-400 shrink-0" />
+                <span>Sync Devices</span>
               </button>
             )}
             <button
@@ -495,7 +495,7 @@ export const WbsView: React.FC<WbsViewProps> = ({
             <span className="text-[#94A3B8] font-bold text-[10px] uppercase font-mono flex items-center gap-1">
               <Filter className="h-3 w-3 text-[#38BDF8]" /> Status:
             </span>
-            {["ALL", "Done", "Demoable", "Blocked", "In Progress", "To Do", "Backlog"].map((st) => (
+            {["ALL", "To Do", "In Progress", "Blocked", "Demoable", "Done", "Backlog"].map((st) => (
               <button
                 key={st}
                 onClick={() => {
@@ -575,6 +575,12 @@ export const WbsView: React.FC<WbsViewProps> = ({
         onOpenEditModal={(item) => {
           setEditingItem(item);
         }}
+        projects={projects}
+        sprints={sprints}
+        activeProjectId={activeProjectId}
+        selectedSprintId={selectedSprintId}
+        onSelectProject={onSelectProject}
+        onSelectSprint={onSelectSprint}
       />
 
       {/* ClickUp-style Work Item Creation Modal with Sprint & Hierarchy Allocation */}

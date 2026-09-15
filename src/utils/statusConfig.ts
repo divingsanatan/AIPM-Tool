@@ -2,30 +2,32 @@ import { StatusConfig, WbsItem } from "../types";
 
 export const DEFAULT_STATUS_CONFIGS: StatusConfig[] = [
   {
-    id: "done",
-    key: "Done",
-    label: "DONE",
-    progressPercent: 100,
-    color: "emerald",
-    dotColor: "bg-emerald-400",
-    badgeBg: "bg-emerald-500/20",
-    badgeText: "text-emerald-300",
-    badgeBorder: "border-emerald-500/30",
+    id: "to-do",
+    key: "To Do",
+    label: "TO DO",
+    progressPercent: 0,
+    color: "slate",
+    dotColor: "bg-slate-400",
+    badgeBg: "bg-slate-700/40",
+    badgeText: "text-slate-300",
+    badgeBorder: "border-slate-600/40",
     isDefault: true,
     order: 1,
+    description: "Planned deliverables ready for active execution",
   },
   {
-    id: "demoable",
-    key: "Demoable",
-    label: "DEMO READY",
-    progressPercent: 60,
-    color: "amber",
-    dotColor: "bg-amber-400",
-    badgeBg: "bg-amber-500/20",
-    badgeText: "text-amber-300",
-    badgeBorder: "border-amber-500/30",
+    id: "in-progress",
+    key: "In Progress",
+    label: "IN PROGRESS",
+    progressPercent: 40,
+    color: "blue",
+    dotColor: "bg-blue-400",
+    badgeBg: "bg-blue-500/20",
+    badgeText: "text-blue-300",
+    badgeBorder: "border-blue-500/30",
     isDefault: true,
     order: 2,
+    description: "Active work packages currently being executed",
   },
   {
     id: "blocked",
@@ -39,32 +41,35 @@ export const DEFAULT_STATUS_CONFIGS: StatusConfig[] = [
     badgeBorder: "border-rose-500/30",
     isDefault: true,
     order: 3,
+    description: "Impediments or critical dependencies preventing progress",
   },
   {
-    id: "in-progress",
-    key: "In Progress",
-    label: "IN PROGRESS",
-    progressPercent: 40,
-    color: "blue",
-    dotColor: "bg-blue-400",
-    badgeBg: "bg-blue-500/20",
-    badgeText: "text-blue-300",
-    badgeBorder: "border-blue-500/30",
+    id: "demoable",
+    key: "Demoable",
+    label: "DEMO READY",
+    progressPercent: 60,
+    color: "amber",
+    dotColor: "bg-amber-400",
+    badgeBg: "bg-amber-500/20",
+    badgeText: "text-amber-300",
+    badgeBorder: "border-amber-500/30",
     isDefault: true,
     order: 4,
+    description: "Deliverables completed and prepared for client / stakeholder review",
   },
   {
-    id: "to-do",
-    key: "To Do",
-    label: "TO DO",
-    progressPercent: 0,
-    color: "slate",
-    dotColor: "bg-slate-400",
-    badgeBg: "bg-slate-700/40",
-    badgeText: "text-slate-300",
-    badgeBorder: "border-slate-600/40",
+    id: "done",
+    key: "Done",
+    label: "DONE",
+    progressPercent: 100,
+    color: "emerald",
+    dotColor: "bg-emerald-400",
+    badgeBg: "bg-emerald-500/20",
+    badgeText: "text-emerald-300",
+    badgeBorder: "border-emerald-500/30",
     isDefault: true,
     order: 5,
+    description: "Verified and formally accepted deliverable packages",
   },
   {
     id: "backlog",
@@ -151,16 +156,22 @@ export const STATUS_COLOR_PALETTES: Record<
   },
 };
 
-const STORAGE_KEY = "wbs_status_configs_v2";
+const STORAGE_KEY = "wbs_status_configs_v3";
+const LEGACY_STORAGE_KEY = "wbs_status_configs_v2";
 
 /**
  * Load status configs from localStorage or return updated defaults.
- * Guarantees that built-in statuses have the exact required progress defaults
- * unless customized.
+ * Guarantees that built-in statuses follow proper workflow order (To Do -> In Progress -> ...)
+ * and automatically migrates any legacy reversed status configurations.
  */
 export function loadStatusConfigs(): StatusConfig[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    let raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      // Check legacy key for migration
+      raw = localStorage.getItem(LEGACY_STORAGE_KEY);
+    }
+
     if (raw) {
       const parsed: StatusConfig[] = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
@@ -174,6 +185,35 @@ export function loadStatusConfigs(): StatusConfig[] {
             merged.push(def);
           }
         });
+
+        // Detect if stored configs used the legacy reverse order where Done was before To Do
+        const doneCfg = merged.find((m) => m.key.toLowerCase() === "done" || m.id === "done");
+        const todoCfg = merged.find((m) => m.key.toLowerCase() === "to do" || m.id === "to-do");
+        if (doneCfg && todoCfg && doneCfg.order <= todoCfg.order) {
+          // Re-map default built-in statuses to correct forward workflow order
+          const defaultWorkflowOrderMap: Record<string, number> = {
+            "to-do": 1,
+            "to do": 1,
+            "in-progress": 2,
+            "in progress": 2,
+            "blocked": 3,
+            "demoable": 4,
+            "demo ready": 4,
+            "done": 5,
+            "backlog": 6,
+          };
+          merged.forEach((item) => {
+            const k = item.key.toLowerCase();
+            if (defaultWorkflowOrderMap[k] !== undefined) {
+              item.order = defaultWorkflowOrderMap[k];
+            } else if (item.order <= 6) {
+              item.order = item.order + 10;
+            }
+          });
+          // Persist the migrated order
+          saveStatusConfigs(merged);
+        }
+
         // Sort by order
         return merged.sort((a, b) => a.order - b.order);
       }

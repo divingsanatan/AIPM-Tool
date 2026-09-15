@@ -31,6 +31,7 @@ import {
 import { loadProjects, saveProjects, loadActiveProjectId, saveActiveProjectId } from "./data/projectsData";
 import { loadSprints, saveSprints } from "./data/sprintsData";
 import { loadDocuments, saveDocuments } from "./data/documentsData";
+import { loadRaidItems, saveRaidItems, normalizeRaidItem } from "./data/raidData";
 import { CreateProjectModal } from "./components/CreateProjectModal";
 import { CreateSprintModal } from "./components/CreateSprintModal";
 import { DeleteSprintModal } from "./components/DeleteSprintModal";
@@ -39,6 +40,7 @@ import { Sidebar } from "./components/Sidebar";
 import { Navbar } from "./components/Navbar";
 import { DashboardView } from "./components/DashboardView";
 import { WbsView } from "./components/WbsView";
+import { GanttChartView } from "./components/GanttChartView";
 import { StakeholdersView } from "./components/StakeholdersView";
 import { RaidView } from "./components/RaidView";
 import { RaciView } from "./components/RaciView";
@@ -47,6 +49,7 @@ import { DocumentsView } from "./components/DocumentsView";
 import { ReportsView } from "./components/ReportsView";
 import { SmartAiPal } from "./components/SmartAiPal";
 import { SyncModal } from "./components/SyncModal";
+import { AiManagerModal } from "./components/AiManagerModal";
 import {
   fetchServerState,
   pushServerState,
@@ -57,12 +60,21 @@ import {
   syncBroadcastChannel,
   SyncPayload,
 } from "./utils/cloudSync";
-import { CheckCircle2, X } from "lucide-react";
+import { CheckCircle2, X, Sparkles } from "lucide-react";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("dashboard");
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
+
+  // PM Pal dock minimize state (persists in localStorage)
+  const [isAiPalMinimized, setIsAiPalMinimized] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("pm_pal_minimized") === "true";
+    } catch {
+      return false;
+    }
+  });
 
   // Multi-Project and Multi-Sprint Architecture
   const [projects, setProjects] = useState<Project[]>(() => loadProjects());
@@ -79,7 +91,7 @@ export default function App() {
   const [projectSettings, setProjectSettings] = useState<ProjectSettings>(initialProjectSettings);
   const [wbsItems, setWbsItems] = useState<WbsItem[]>(() => calculateWbsHierarchyRollups(initialWbsItems, initialStakeholders).rolledUpItems);
   const [stakeholders, setStakeholders] = useState<Stakeholder[]>(initialStakeholders);
-  const [raidItems, setRaidItems] = useState<RaidItem[]>(initialRaidItems);
+  const [raidItems, setRaidItems] = useState<RaidItem[]>(() => loadRaidItems());
   const [changeRequests, setChangeRequests] = useState<ChangeRequest[]>(initialChangeRequests);
   const [documents, setDocuments] = useState<ProjectDocument[]>(() => loadDocuments());
   const [raciEntries, setRaciEntries] = useState<RaciMatrixEntry[]>(initialRaciEntries);
@@ -102,7 +114,9 @@ export default function App() {
   // Centralized Multi-Device Synchronization Engine
   const performSync = useCallback(
     async (isSilent: boolean = false, forcePush: boolean = false) => {
-      setIsSyncing(true);
+      if (!isSilent) {
+        setIsSyncing(true);
+      }
       try {
         const currentPayload: SyncPayload = {
           projects: loadProjects(),
@@ -117,26 +131,30 @@ export default function App() {
         const result = await syncBidirectional(currentPayload, forcePush);
         const { merged, hasChanges } = result;
 
-        if (merged.projects && merged.projects.length > 0) {
-          setProjects(merged.projects);
-          saveProjects(merged.projects);
-        }
-        if (merged.sprints && merged.sprints.length > 0) {
-          setSprints(merged.sprints);
-          saveSprints(merged.sprints);
-        }
-        if (merged.wbsItems && merged.wbsItems.length > 0) {
-          setWbsItems(merged.wbsItems);
-        }
-        if (merged.raidItems && merged.raidItems.length > 0) {
-          setRaidItems(merged.raidItems);
-        }
-        if (merged.changeRequests && merged.changeRequests.length > 0) {
-          setChangeRequests(merged.changeRequests);
-        }
-        if (merged.documents && merged.documents.length > 0) {
-          setDocuments(merged.documents);
-          saveDocuments(merged.documents);
+        if (hasChanges) {
+          if (merged.projects && merged.projects.length > 0) {
+            setProjects(merged.projects);
+            saveProjects(merged.projects);
+          }
+          if (merged.sprints && merged.sprints.length > 0) {
+            setSprints(merged.sprints);
+            saveSprints(merged.sprints);
+          }
+          if (merged.wbsItems && merged.wbsItems.length > 0) {
+            setWbsItems(merged.wbsItems);
+          }
+          if (merged.raidItems && merged.raidItems.length > 0) {
+            const normRaid = merged.raidItems.map(normalizeRaidItem);
+            setRaidItems(normRaid);
+            saveRaidItems(normRaid);
+          }
+          if (merged.changeRequests && merged.changeRequests.length > 0) {
+            setChangeRequests(merged.changeRequests);
+          }
+          if (merged.documents && merged.documents.length > 0) {
+            setDocuments(merged.documents);
+            saveDocuments(merged.documents);
+          }
         }
 
         setLastSyncTime(
@@ -158,7 +176,9 @@ export default function App() {
           showToast("Sync attempted — check internet connection or server status");
         }
       } finally {
-        setIsSyncing(false);
+        if (!isSilent) {
+          setIsSyncing(false);
+        }
       }
     },
     [wbsItems, raidItems, changeRequests, stakeholders]
@@ -183,12 +203,12 @@ export default function App() {
     window.addEventListener("focus", handleFocus);
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
-    // Periodic polling every 12 seconds
+    // Periodic background sync
     const intervalId = setInterval(() => {
       if (document.visibilityState === "visible") {
         performSync(true);
       }
-    }, 12000);
+    }, 30000);
 
     // Cross-tab broadcast channel listener
     const handleMessage = (event: MessageEvent) => {
@@ -230,7 +250,9 @@ export default function App() {
       setWbsItems(merged.wbsItems);
     }
     if (merged.raidItems) {
-      setRaidItems(merged.raidItems);
+      const normRaid = merged.raidItems.map(normalizeRaidItem);
+      setRaidItems(normRaid);
+      saveRaidItems(normRaid);
     }
     if (merged.changeRequests) {
       setChangeRequests(merged.changeRequests);
@@ -526,6 +548,14 @@ export default function App() {
           const itemSprint = sprints.find((s) => s.id === r.sprintId);
           if (itemSprint?.projectId) return itemSprint.projectId === activeProjectId;
         }
+        const linkedIds = Array.isArray(r.wbsItemIds) && r.wbsItemIds.length > 0 ? r.wbsItemIds : (r.wbsItemId ? [r.wbsItemId] : []);
+        if (linkedIds.length > 0) {
+          const inProj = linkedIds.some((id) => {
+            const w = wbsItems.find((item) => item.id === id);
+            return w?.projectId === activeProjectId;
+          });
+          if (inProj) return true;
+        }
         return activeProjectId === "proj-flutter";
       });
     }
@@ -533,18 +563,26 @@ export default function App() {
       if (selectedSprintId === "backlog") {
         items = items.filter((r) => {
           if (r.sprintId) return false;
-          if (r.wbsItemId) {
-            const wbs = wbsItems.find((w) => w.id === r.wbsItemId);
-            if (wbs?.sprintId) return false;
+          const linkedIds = Array.isArray(r.wbsItemIds) && r.wbsItemIds.length > 0 ? r.wbsItemIds : (r.wbsItemId ? [r.wbsItemId] : []);
+          if (linkedIds.length > 0) {
+            const hasSprintTask = linkedIds.some((id) => {
+              const wbs = wbsItems.find((w) => w.id === id);
+              return Boolean(wbs?.sprintId);
+            });
+            if (hasSprintTask) return false;
           }
           return true;
         });
       } else {
         items = items.filter((r) => {
           if (r.sprintId) return r.sprintId === selectedSprintId;
-          if (r.wbsItemId) {
-            const wbs = wbsItems.find((w) => w.id === r.wbsItemId);
-            if (wbs?.sprintId) return wbs.sprintId === selectedSprintId;
+          const linkedIds = Array.isArray(r.wbsItemIds) && r.wbsItemIds.length > 0 ? r.wbsItemIds : (r.wbsItemId ? [r.wbsItemId] : []);
+          if (linkedIds.length > 0) {
+            const hasMatch = linkedIds.some((id) => {
+              const wbs = wbsItems.find((w) => w.id === id);
+              return wbs?.sprintId === selectedSprintId;
+            });
+            if (hasMatch) return true;
           }
           return false;
         });
@@ -710,11 +748,19 @@ export default function App() {
           const itemSprint = sprints.find((s) => s.id === r.sprintId);
           if (itemSprint?.projectId) return itemSprint.projectId === activeProjectId;
         }
+        const linkedIds = Array.isArray(r.wbsItemIds) && r.wbsItemIds.length > 0 ? r.wbsItemIds : (r.wbsItemId ? [r.wbsItemId] : []);
+        if (linkedIds.length > 0) {
+          const inProj = linkedIds.some((id) => {
+            const w = wbsItems.find((item) => item.id === id);
+            return w?.projectId === activeProjectId;
+          });
+          if (inProj) return true;
+        }
         return activeProjectId === "proj-flutter";
       });
     }
     return items;
-  }, [raidItems, activeProjectId, sprints]);
+  }, [raidItems, activeProjectId, sprints, wbsItems]);
 
   const projectScopedStakeholders = useMemo(() => {
     if (activeProjectId === "all") return stakeholders;
@@ -858,17 +904,40 @@ export default function App() {
 
   // RAID CRUD
   const handleAddRaidItem = (item: RaidItem) => {
-    setRaidItems((prev) => [item, ...prev]);
-    showToast(`Logged new ${item.category}: ${item.title}`);
+    const normalized = normalizeRaidItem(item);
+    let nextRaid: RaidItem[] = [];
+    setRaidItems((prev) => {
+      nextRaid = [normalized, ...prev];
+      saveRaidItems(nextRaid);
+      return nextRaid;
+    });
+    pushServerState({ raidItems: nextRaid, replaceRaidItems: true });
+    notifySyncChannel({ raidItems: nextRaid });
+    showToast(`Logged new ${normalized.category}: ${normalized.title}`);
   };
 
   const handleUpdateRaidItem = (updated: RaidItem) => {
-    setRaidItems((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
-    showToast(`Updated ${updated.category}: ${updated.title}`);
+    const normalized = normalizeRaidItem(updated);
+    let nextRaid: RaidItem[] = [];
+    setRaidItems((prev) => {
+      nextRaid = prev.map((item) => (item.id === normalized.id ? normalized : item));
+      saveRaidItems(nextRaid);
+      return nextRaid;
+    });
+    pushServerState({ raidItems: nextRaid, replaceRaidItems: true });
+    notifySyncChannel({ raidItems: nextRaid });
+    showToast(`Updated ${normalized.category}: ${normalized.title}`);
   };
 
   const handleDeleteRaidItem = (id: string) => {
-    setRaidItems((prev) => prev.filter((item) => item.id !== id));
+    let nextRaid: RaidItem[] = [];
+    setRaidItems((prev) => {
+      nextRaid = prev.filter((item) => item.id !== id);
+      saveRaidItems(nextRaid);
+      return nextRaid;
+    });
+    pushServerState({ raidItems: nextRaid, replaceRaidItems: true });
+    notifySyncChannel({ raidItems: nextRaid });
     showToast("RAID item deleted.");
   };
 
@@ -1166,7 +1235,11 @@ export default function App() {
         />
 
         {/* Scrollable Viewport */}
-        <div className="flex-1 overflow-y-auto min-w-0 p-3 sm:p-5 md:p-6 pb-28 sm:pb-32 space-y-6">
+        <div
+          id="main-app-viewport"
+          tabIndex={0}
+          className="flex-1 overflow-y-auto min-w-0 p-3 sm:p-5 md:p-6 pb-28 sm:pb-32 space-y-6 focus:outline-none"
+        >
           {activeTab === "dashboard" && (
             <DashboardView
               wbsItems={projectScopedWbsItems}
@@ -1223,6 +1296,26 @@ export default function App() {
             />
           )}
 
+          {activeTab === "gantt" && (
+            <GanttChartView
+              wbsItems={projectScopedWbsItems}
+              stakeholders={filteredStakeholders}
+              projects={projects}
+              sprints={filteredSprints}
+              activeProjectId={activeProjectId}
+              selectedSprintId={selectedSprintId}
+              onSelectProject={handleSelectProject}
+              onSelectSprint={handleSelectSprint}
+              onUpdateWbsItem={handleUpdateWbsItem}
+              onOpenEditModal={() => {
+                setActiveTab("wbs");
+              }}
+              onOpenAddModal={() => {
+                setActiveTab("wbs");
+              }}
+            />
+          )}
+
           {activeTab === "stakeholders" && (
             <StakeholdersView
               stakeholders={filteredStakeholders}
@@ -1244,6 +1337,8 @@ export default function App() {
               allProjectRaidItems={projectScopedRaidItems}
               sprints={sprints}
               wbsItems={projectScopedWbsItems}
+              allWbsItems={wbsItems}
+              projects={projects}
               stakeholders={filteredStakeholders}
               evmMetrics={evmMetrics}
               onAddRaidItem={handleAddRaidItem}
@@ -1254,6 +1349,7 @@ export default function App() {
               selectedSprint={sprints.find((s) => s.id === selectedSprintId) || null}
               onSelectSprint={setSelectedSprintId}
               onClearSprint={() => handleSelectSprint(null)}
+              onUpdateWbsItem={handleUpdateWbsItem}
             />
           )}
 
@@ -1308,7 +1404,7 @@ export default function App() {
         </div>
 
         {/* High Density Footer */}
-        <footer className="h-8 bg-[#060913] border-t border-[#1E293B] flex items-center px-4 sm:px-6 justify-between text-[10px] text-[#94A3B8] shrink-0 font-mono">
+        <footer className="h-8 bg-[#060913] border-t border-[#1E293B] flex items-center px-4 sm:px-6 justify-between text-[10px] text-[#94A3B8] shrink-0 font-mono z-30">
           <div className="flex items-center space-x-2 sm:space-x-4 truncate">
             <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse"></span>
@@ -1321,10 +1417,31 @@ export default function App() {
             <span>•</span>
             <span className="hidden sm:inline text-slate-400">Standard: PMBOK v7 / ANSI 99-001-2021</span>
           </div>
-          <div className="flex items-center space-x-3 shrink-0">
+          <div className="flex items-center space-x-2 sm:space-x-3 shrink-0">
             <span className="text-[#38BDF8] font-bold uppercase tracking-wider">
               {filteredSprints.length} Sprints • {filteredWbsItems.length} Work Items
             </span>
+            <span className="text-slate-700 hidden sm:inline">•</span>
+            {/* Quick Toggle for PM Pal AI Search Bar */}
+            <button
+              type="button"
+              onClick={() => {
+                const next = !isAiPalMinimized;
+                setIsAiPalMinimized(next);
+                try {
+                  localStorage.setItem("pm_pal_minimized", String(next));
+                } catch {}
+              }}
+              className="hidden sm:flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono border transition-colors cursor-pointer border-[#1E293B] hover:border-sky-500/50 bg-[#0F172A] text-slate-300 hover:text-sky-300"
+              title="Toggle PM Pal AI Search Bar (Ctrl+K)"
+            >
+              <Sparkles className="w-3 h-3 text-sky-400" />
+              <span>AI Search</span>
+              <span className={`text-[9px] px-1 rounded ${isAiPalMinimized ? "bg-slate-800 text-slate-400" : "bg-sky-500/20 text-sky-300 font-bold"}`}>
+                {isAiPalMinimized ? "Hidden" : "Docked"}
+              </span>
+              <span className="text-[9px] text-slate-500">Ctrl+K</span>
+            </button>
           </div>
         </footer>
 
@@ -1345,6 +1462,8 @@ export default function App() {
           onAddDocument={handleAddDocument}
           onBatchAddWbsItems={handleBatchAddWbsItems}
           showToast={showToast}
+          isMinimized={isAiPalMinimized}
+          onToggleMinimize={setIsAiPalMinimized}
         />
       </main>
 
@@ -1425,6 +1544,10 @@ export default function App() {
         onApplyMergedData={handleApplyMergedData}
         showToast={showToast}
       />
+
+      {/* Multi-API AI Manager Modal */}
+      <AiManagerModal />
     </div>
+
   );
 }

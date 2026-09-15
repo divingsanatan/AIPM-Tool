@@ -4,9 +4,11 @@ import {
   Upload,
   Layers,
   FolderGit2,
+  Cpu,
 } from "lucide-react";
 import { ActiveTab, EvmMetrics, ProjectSettings, Project, Sprint } from "../types";
 import { ProjectSwitcher } from "./ProjectSwitcher";
+import { useAiConfig } from "../context/AiConfigContext";
 
 interface NavbarProps {
   activeTab: ActiveTab;
@@ -52,6 +54,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onPromptDeleteProject,
 }) => {
   const currentProject = projects.find((p) => p.id === activeProjectId);
+  const { activeConfig, setIsAiManagerOpen } = useAiConfig();
 
   return (
     <header
@@ -102,6 +105,19 @@ export const Navbar: React.FC<NavbarProps> = ({
 
       {/* Right Action Buttons */}
       <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+        {/* AI API Switcher & Manager Button */}
+        <button
+          type="button"
+          onClick={() => setIsAiManagerOpen(true)}
+          className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 bg-[#0F172A] hover:bg-[#18233C] border border-[#22314E] hover:border-sky-500/40 text-slate-200 hover:text-white rounded-lg text-xs font-medium transition-all cursor-pointer shadow-xs"
+          title={`Active AI Engine: ${activeConfig.name} (${activeConfig.model}). Click to switch or configure APIs.`}
+        >
+          <Cpu className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+          <span className="hidden sm:inline font-mono text-[11px] text-sky-300 font-semibold">
+            {activeConfig.name.split(" ")[0]}
+          </span>
+        </button>
+
         {/* Upload Docs Button */}
         <button
           onClick={onUploadDocsClick || (() => setActiveTab("documents"))}

@@ -820,6 +820,10 @@ export const initialWbsItems: WbsItem[] = [
     sprintId: "sprint-5-flutter",
     startDate: "2026-04-10",
     dueDate: "2026-05-10",
+    blockedStartedAt: "2026-04-18T09:30:00.000Z",
+    totalBlockedDurationSeconds: 144000,
+    activeWorkSeconds: 126000,
+    blockedReason: "Delay in IBM MQ connector sandbox credentials from Core Vendor",
   },
   {
     id: "wbs-2-2-2",
@@ -840,6 +844,10 @@ export const initialWbsItems: WbsItem[] = [
     sprintId: "sprint-5-flutter",
     startDate: "2026-04-15",
     dueDate: "2026-05-30",
+    blockedStartedAt: "2026-04-20T14:00:00.000Z",
+    totalBlockedDurationSeconds: 86400,
+    activeWorkSeconds: 108000,
+    blockedReason: "Waiting on network security firewall rule authorization",
   },
 
   // 2.3 Real-time Fraud & Anomaly Scoring

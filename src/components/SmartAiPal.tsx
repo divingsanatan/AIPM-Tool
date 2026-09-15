@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
+import Markdown from "react-markdown";
 import {
   Sparkles,
   Search,
@@ -27,7 +28,15 @@ import {
   Users,
   GitPullRequest,
   Check,
+  Cpu,
+  Settings2,
+  Minus,
+  Eye,
+  EyeOff,
+  MoveHorizontal,
+  Minimize2,
 } from "lucide-react";
+import { useAiConfig } from "../context/AiConfigContext";
 import {
   ActiveTab,
   Project,
@@ -58,6 +67,8 @@ interface SmartAiPalProps {
   onAddDocument: (doc: ProjectDocument) => void;
   onBatchAddWbsItems?: (items: WbsItem[]) => void;
   showToast: (msg: string) => void;
+  isMinimized?: boolean;
+  onToggleMinimize?: (minimized: boolean) => void;
 }
 
 interface ChatMessage {
@@ -72,7 +83,31 @@ interface ChatMessage {
     spi?: number;
     highlight?: string;
   };
+  providerName?: string;
+  warning?: string;
+  hasApiError?: boolean;
+  canSwitchApi?: boolean;
 }
+
+const cleanMathSyntax = (text: string): string => {
+  if (!text) return "";
+  return text
+    // Replace \text{...} with just text content
+    .replace(/\\text\{([^}]+)\}/g, "$1")
+    // Replace \frac{a}{b} with a / b
+    .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, "$1 / $2")
+    // Replace \sum with Σ
+    .replace(/\\sum/g, "Σ")
+    // Replace \$ with $
+    .replace(/\\\$/g, "$")
+    // Replace \quad and \qquad
+    .replace(/\\quad/g, "  ")
+    .replace(/\\qquad/g, "    ")
+    // Replace $$...$$ block with `...`
+    .replace(/\$\$([\s\S]*?)\$\$/g, (_, math) => `\`${math.trim()}\``)
+    // Replace $...$ inline with `...`
+    .replace(/\$([^$]+)\$/g, (_, math) => `\`${math.trim()}\``);
+};
 
 export const SmartAiPal: React.FC<SmartAiPalProps> = ({
   projects,
@@ -90,14 +125,100 @@ export const SmartAiPal: React.FC<SmartAiPalProps> = ({
   onAddDocument,
   onBatchAddWbsItems,
   showToast,
+  isMinimized: isMinimizedProp,
+  onToggleMinimize,
 }) => {
+  // Global AI Configurations
+  const {
+    configs: aiConfigs,
+    activeConfig: activeAiConfig,
+    activeConfigId,
+    setActiveConfigId,
+    setIsAiManagerOpen,
+  } = useAiConfig();
+
   // Expansion and active view states
   const [isExpanded, setIsExpanded] = useState(false);
   const [currentPalTab, setCurrentPalTab] = useState<AiPalTab>("chat");
 
+  // Dock minimize & position states (persisted in localStorage)
+  const [internalMinimized, setInternalMinimized] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("pm_pal_minimized") === "true";
+    } catch {
+      return false;
+    }
+  });
+  const isDockMinimized = isMinimizedProp !== undefined ? isMinimizedProp : internalMinimized;
+
+  const handleSetMinimized = (val: boolean) => {
+    setInternalMinimized(val);
+    try {
+      localStorage.setItem("pm_pal_minimized", String(val));
+    } catch {}
+    if (onToggleMinimize) {
+      onToggleMinimize(val);
+    }
+  };
+
+  const [dockPosition, setDockPosition] = useState<"center" | "right">(() => {
+    try {
+      return (localStorage.getItem("pm_pal_dock_position") as "center" | "right") || "center";
+    } catch {
+      return "center";
+    }
+  });
+
+  const handleToggleDockPosition = () => {
+    const next = dockPosition === "center" ? "right" : "center";
+    setDockPosition(next);
+    try {
+      localStorage.setItem("pm_pal_dock_position", next);
+    } catch {}
+    showToast(
+      next === "right"
+        ? "AI bar docked to right corner (clears table scrollbar)"
+        : "AI bar centered"
+    );
+  };
+
+  // Peek mode: temporarily makes bar translucent & click-through so user can interact with scrollbar underneath
+  const [isPeeking, setIsPeeking] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Global hotkeys: Ctrl+K / Cmd+K to toggle/focus, Escape to close/minimize or exit peek
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        if (isDockMinimized) {
+          handleSetMinimized(false);
+          setTimeout(() => inputRef.current?.focus(), 80);
+        } else {
+          if (document.activeElement === inputRef.current && !isExpanded) {
+            handleSetMinimized(true);
+          } else {
+            inputRef.current?.focus();
+          }
+        }
+      } else if (e.key === "Escape") {
+        if (isPeeking) {
+          setIsPeeking(false);
+        } else if (isExpanded) {
+          setIsExpanded(false);
+        } else if (!isDockMinimized && document.activeElement === inputRef.current) {
+          handleSetMinimized(true);
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isDockMinimized, isExpanded, isPeeking]);
+
   // Selected Scope: "all" or specific project ID
   const [targetScope, setTargetScope] = useState<string>("all");
   const [isScopeDropdownOpen, setIsScopeDropdownOpen] = useState(false);
+  const [isAiDropdownOpen, setIsAiDropdownOpen] = useState(false);
 
   // Search & Input state
   const [inputText, setInputText] = useState("");
@@ -219,6 +340,7 @@ export const SmartAiPal: React.FC<SmartAiPalProps> = ({
           projectContext: scopedContextData,
           scope: targetScope,
           documentContext: docContent ? { title: docTitle || "Attached Note", content: docContent.slice(0, 3000) } : undefined,
+          aiConfig: activeAiConfig,
         }),
       });
 
@@ -235,6 +357,10 @@ export const SmartAiPal: React.FC<SmartAiPalProps> = ({
         scopeName: scopeDisplayName,
         action: data.recommendedAction,
         relevantMetrics: data.relevantMetrics,
+        providerName: data.activeProvider || activeAiConfig.name,
+        warning: data.warning,
+        hasApiError: !!data.apiError,
+        canSwitchApi: true,
       };
 
       setMessages((prev) => [...prev, aiMsg]);
@@ -244,14 +370,19 @@ export const SmartAiPal: React.FC<SmartAiPalProps> = ({
         {
           id: `ai-err-${Date.now()}`,
           sender: "ai",
-          text: `Notice: ${err.message || "Could not reach PM Pal server."} Reverting to local project indicators: CPI ${evmMetrics.cpi?.toFixed(2) || "1.00"}, SPI ${evmMetrics.spi?.toFixed(2) || "1.00"}.`,
+          text: `Notice: ${err.message || "Could not reach PM Pal server."}\n\nReverting to local project indicators:\n• Schedule Performance (SPI): ${evmMetrics.spi?.toFixed(2) || "1.00"}\n• Cost Performance (CPI): ${evmMetrics.cpi?.toFixed(2) || "1.00"}\n• Total Budget (BAC): $${(scopedContextData.evmMetrics?.bac || 0).toLocaleString()}`,
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           scopeName: scopeDisplayName,
+          providerName: `${activeAiConfig.name} (Offline Fallback)`,
+          hasApiError: true,
+          canSwitchApi: true,
+          warning: `Active AI API "${activeAiConfig.name}" could not be reached. You can click below to switch to another API provider or configure your custom API key.`,
         },
       ]);
     } finally {
       setIsLoading(false);
     }
+
   };
 
   // Quick prompt recommendations based on scope
@@ -534,6 +665,7 @@ export const SmartAiPal: React.FC<SmartAiPalProps> = ({
         body: JSON.stringify({
           documentTitle: docTitle || "Project Specification",
           documentText: docContent,
+          aiConfig: activeAiConfig,
         }),
       });
 
@@ -619,12 +751,63 @@ export const SmartAiPal: React.FC<SmartAiPalProps> = ({
     handleSendQuery(prompt);
   };
 
+  // Minimized state: sleek non-obstructive launcher docked in corner, completely freeing center table scrollbars
+  if (isDockMinimized) {
+    return (
+      <div
+        id="smart-ai-pal-minimized"
+        className="absolute bottom-10 right-4 sm:right-6 z-40 select-none animate-in fade-in zoom-in-95 duration-150"
+      >
+        <button
+          type="button"
+          id="smart-ai-pal-launch-button"
+          onClick={() => {
+            handleSetMinimized(false);
+            setTimeout(() => inputRef.current?.focus(), 80);
+          }}
+          className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[#0B111E]/95 hover:bg-[#131D31] border border-sky-500/40 hover:border-sky-400 text-sky-300 hover:text-white shadow-2xl backdrop-blur-xl text-xs font-bold transition-all cursor-pointer group shadow-sky-950/50"
+          title="Open AI Assistant & Search Bar (Ctrl+K or Cmd+K) • Minimized to keep table scrollbars accessible"
+        >
+          <div className="relative flex items-center justify-center">
+            <Sparkles className="w-4 h-4 text-sky-400 group-hover:rotate-12 transition-transform" />
+            <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          </div>
+          <span className="font-semibold">PM Pal</span>
+          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[#141C2E] text-slate-400 border border-slate-700/80 group-hover:border-slate-600">
+            Ctrl+K
+          </span>
+        </button>
+      </div>
+    );
+  }
+
   return (
     <>
-      {/* Floating Bottom AI Pal Dock (Positioned relative to main content area across all screen sizes) */}
+      {/* Peek Restore Floating Chip (When user clicks peek to click through to scrollbar) */}
+      {isPeeking && (
+        <div className="fixed sm:absolute bottom-28 left-1/2 -translate-x-1/2 z-50 pointer-events-auto animate-bounce">
+          <button
+            type="button"
+            onClick={() => setIsPeeking(false)}
+            className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-full shadow-2xl transition-all cursor-pointer"
+            title="Restore AI bar visibility and controls"
+          >
+            <EyeOff className="w-4 h-4" />
+            <span>Peeking beneath — Click to restore AI Bar (or Esc)</span>
+          </button>
+        </div>
+      )}
+
+      {/* Floating Bottom AI Pal Dock (Positioned cleanly above footer) */}
       <div
         id="smart-ai-pal-container"
-        className="absolute bottom-2 sm:bottom-3.5 md:bottom-4 left-1/2 -translate-x-1/2 z-40 w-[98%] max-w-[calc(100%-0.75rem)] sm:max-w-2xl md:max-w-3xl lg:max-w-4xl xl:max-w-5xl transition-all duration-200 select-none pointer-events-auto"
+        className={`absolute bottom-10 sm:bottom-11 z-40 transition-all duration-200 select-none ${
+          dockPosition === "center"
+            ? "left-1/2 -translate-x-1/2 w-[98%] max-w-[calc(100%-0.75rem)] sm:max-w-2xl md:max-w-3xl lg:max-w-4xl xl:max-w-5xl"
+            : "right-3 sm:right-6 w-[94%] sm:w-[520px] md:w-[600px]"
+        } ${
+          isPeeking ? "opacity-15 pointer-events-none" : "opacity-100 pointer-events-auto"
+        }`}
       >
         {/* Expanded Pal Drawer Panel */}
         {isExpanded && (
@@ -734,6 +917,80 @@ export const SmartAiPal: React.FC<SmartAiPalProps> = ({
                   )}
                 </div>
 
+                {/* AI Model / API Selector in Drawer Header */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setIsAiDropdownOpen(!isAiDropdownOpen)}
+                    className="flex items-center gap-1.5 text-xs bg-[#121A2D] hover:bg-[#18233C] text-sky-300 border border-sky-500/30 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer"
+                    title={`Active AI: ${activeAiConfig.name} (${activeAiConfig.model}). Click to switch API or configure.`}
+                  >
+                    <Cpu className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                    <span className="max-w-[95px] sm:max-w-[140px] truncate font-medium text-[11px]">
+                      {activeAiConfig.name.split(" ")[0]}
+                    </span>
+                    <ChevronDown className="w-3 h-3 text-slate-400" />
+                  </button>
+
+                  {/* AI Provider Dropdown */}
+                  {isAiDropdownOpen && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-40 cursor-default"
+                        onClick={() => setIsAiDropdownOpen(false)}
+                      />
+                      <div className="absolute right-0 top-full mt-1.5 w-72 max-w-[85vw] bg-[#0B1120] border border-[#263554] rounded-xl shadow-2xl py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100">
+                        <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-[#1A253E] flex items-center justify-between">
+                          <span>Active AI Engine</span>
+                          <span className="text-sky-400 font-mono">Multi-API</span>
+                        </div>
+
+                        <div className="max-h-56 overflow-y-auto py-1">
+                          {aiConfigs.map((cfg) => (
+                            <button
+                              key={cfg.id}
+                              type="button"
+                              onClick={() => {
+                                setActiveConfigId(cfg.id);
+                                setIsAiDropdownOpen(false);
+                                showToast(`Switched AI provider to ${cfg.name}`);
+                              }}
+                              className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-[#151F36] cursor-pointer ${
+                                activeConfigId === cfg.id ? "text-sky-300 font-semibold bg-sky-500/10" : "text-slate-300"
+                              }`}
+                            >
+                              <div className="min-w-0 pr-2">
+                                <div className="font-medium truncate flex items-center gap-1.5">
+                                  <span>{cfg.name}</span>
+                                  {cfg.provider === "local_pmi" && (
+                                    <span className="text-[9px] px-1 bg-teal-500/20 text-teal-300 rounded">Offline</span>
+                                  )}
+                                </div>
+                                <div className="text-[10px] text-slate-500 font-mono truncate">{cfg.model}</div>
+                              </div>
+                              {activeConfigId === cfg.id && <Check className="w-3.5 h-3.5 text-sky-400 shrink-0" />}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="border-t border-[#1A253E] p-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsAiDropdownOpen(false);
+                              setIsAiManagerOpen(true);
+                            }}
+                            className="w-full px-2.5 py-1.5 bg-[#142038] hover:bg-[#1B2A4A] text-sky-300 hover:text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                          >
+                            <Settings2 className="w-3.5 h-3.5" />
+                            <span>Manage & Add AI APIs...</span>
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+
                 {/* Close/Minimize Button */}
                 <button
                   type="button"
@@ -806,10 +1063,15 @@ export const SmartAiPal: React.FC<SmartAiPalProps> = ({
                       msg.sender === "user" ? "items-end" : "items-start"
                     }`}
                   >
-                    <div className="flex items-center gap-1.5 mb-1 px-1">
+                    <div className="flex items-center gap-1.5 mb-1 px-1 flex-wrap">
                       <span className="text-[10px] font-semibold text-slate-400">
                         {msg.sender === "user" ? "You" : "PM Pal"}
                       </span>
+                      {msg.sender === "ai" && (
+                        <span className="text-[9px] px-1.5 py-0.2 bg-sky-500/15 text-sky-300 rounded border border-sky-500/30 font-mono">
+                          {msg.providerName || activeAiConfig.name}
+                        </span>
+                      )}
                       <span className="text-[10px] text-slate-500 font-mono">
                         {msg.timestamp}
                       </span>
@@ -825,6 +1087,24 @@ export const SmartAiPal: React.FC<SmartAiPalProps> = ({
                           : "bg-[#0F172A] border border-[#232F48] text-slate-200 rounded-bl-xs"
                       }`}
                     >
+                      {/* Optional API Warning or Fallback Banner */}
+                      {msg.warning && (
+                        <div className="mb-2.5 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                          <div className="flex items-start gap-2 min-w-0">
+                            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                            <span className="text-[11px] leading-snug">{msg.warning}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setIsAiManagerOpen(true)}
+                            className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 active:scale-95 text-black font-bold text-[11px] rounded-lg transition-colors cursor-pointer shrink-0 flex items-center gap-1 shadow-sm"
+                          >
+                            <Cpu className="w-3.5 h-3.5" />
+                            <span>Switch AI API</span>
+                          </button>
+                        </div>
+                      )}
+
                       {msg.relevantMetrics?.highlight && (
                         <div className="mb-2 p-2 rounded-lg bg-[#070D1A] border border-sky-500/30 text-sky-300 font-mono text-[11px] flex items-center gap-1.5">
                           <AlertCircle className="w-3.5 h-3.5 shrink-0 text-sky-400" />
@@ -832,7 +1112,13 @@ export const SmartAiPal: React.FC<SmartAiPalProps> = ({
                         </div>
                       )}
 
-                      <div className="whitespace-pre-line">{msg.text}</div>
+                      {msg.sender === "user" ? (
+                        <div className="whitespace-pre-wrap">{msg.text}</div>
+                      ) : (
+                        <div className="markdown-content text-slate-200 text-xs leading-relaxed space-y-2 break-words [&>p]:mb-2 [&>p:last-child]:mb-0 [&>ul]:list-disc [&>ul]:pl-4 [&>ul]:space-y-1 [&>ol]:list-decimal [&>ol]:pl-4 [&>ol]:space-y-1 [&>h1]:text-sm [&>h1]:font-bold [&>h1]:text-white [&>h1]:mt-2 [&>h1]:mb-1 [&>h2]:text-xs [&>h2]:font-bold [&>h2]:text-white [&>h2]:mt-2 [&>h2]:mb-1 [&>h3]:text-xs [&>h3]:font-semibold [&>h3]:text-sky-300 [&>h3]:mt-1.5 [&>h3]:mb-0.5 [&_strong]:text-white [&_strong]:font-bold [&_code]:bg-[#141E33] [&_code]:border [&_code]:border-sky-500/25 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-sky-300 [&_code]:font-mono [&_code]:text-[11px] [&_table]:w-full [&_table]:border-collapse [&_table]:my-2 [&_th]:border [&_th]:border-slate-700 [&_th]:px-2 [&_th]:py-1 [&_th]:bg-slate-800/80 [&_th]:text-slate-200 [&_th]:text-left [&_td]:border [&_td]:border-slate-800 [&_td]:px-2 [&_td]:py-1 [&_blockquote]:border-l-2 [&_blockquote]:border-sky-500 [&_blockquote]:pl-2.5 [&_blockquote]:italic [&_blockquote]:text-slate-300">
+                          <Markdown>{cleanMathSyntax(msg.text)}</Markdown>
+                        </div>
+                      )}
 
                       {/* Interactive Proposed Action ("Do Stufff") */}
                       {msg.action && msg.action.type !== "NONE" && (
@@ -1202,6 +1488,79 @@ export const SmartAiPal: React.FC<SmartAiPalProps> = ({
             )}
           </div>
 
+          {/* Quick AI API Selector Pill in Dock */}
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              id="smart-ai-pal-engine-pill"
+              onClick={() => setIsAiDropdownOpen(!isAiDropdownOpen)}
+              className="flex items-center gap-1 bg-[#121A2D] hover:bg-[#1A253E] border border-sky-500/30 text-sky-300 text-xs sm:text-[13px] font-medium px-1.5 sm:px-2 py-2 sm:py-2.5 rounded-xl transition-colors cursor-pointer max-w-[85px] xs:max-w-[120px] sm:max-w-[155px] truncate shrink-0"
+              title={`Active AI: ${activeAiConfig.name} (${activeAiConfig.model}). Click to switch API or configure.`}
+            >
+              <Cpu className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+              <span className="truncate">{activeAiConfig.name.split(" ")[0]}</span>
+              <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
+            </button>
+
+            {/* Dropdown Menu from Dock Pill (Opens upward above dock when not expanded) */}
+            {isAiDropdownOpen && !isExpanded && (
+              <>
+                <div
+                  className="fixed inset-0 z-40 cursor-default"
+                  onClick={() => setIsAiDropdownOpen(false)}
+                />
+                <div className="absolute left-0 bottom-full mb-2.5 w-72 max-w-[85vw] bg-[#0B1120] border border-[#263554] rounded-xl shadow-2xl py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100">
+                  <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-[#1A253E] flex items-center justify-between">
+                    <span>Active AI Engine</span>
+                    <span className="text-sky-400 font-mono">Multi-API</span>
+                  </div>
+
+                  <div className="max-h-56 overflow-y-auto py-1">
+                    {aiConfigs.map((cfg) => (
+                      <button
+                        key={cfg.id}
+                        type="button"
+                        onClick={() => {
+                          setActiveConfigId(cfg.id);
+                          setIsAiDropdownOpen(false);
+                          showToast(`Switched AI provider to ${cfg.name}`);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-[#151F36] cursor-pointer ${
+                          activeConfigId === cfg.id ? "text-sky-300 font-semibold bg-sky-500/10" : "text-slate-300"
+                        }`}
+                      >
+                        <div className="min-w-0 pr-2">
+                          <div className="font-medium truncate flex items-center gap-1.5">
+                            <span>{cfg.name}</span>
+                            {cfg.provider === "local_pmi" && (
+                              <span className="text-[9px] px-1 bg-teal-500/20 text-teal-300 rounded">Offline</span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-slate-500 font-mono truncate">{cfg.model}</div>
+                        </div>
+                        {activeConfigId === cfg.id && <Check className="w-3.5 h-3.5 text-sky-400 shrink-0" />}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="border-t border-[#1A253E] p-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAiDropdownOpen(false);
+                        setIsAiManagerOpen(true);
+                      }}
+                      className="w-full px-2.5 py-1.5 bg-[#142038] hover:bg-[#1B2A4A] text-sky-300 hover:text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Settings2 className="w-3.5 h-3.5" />
+                      <span>Manage & Add AI APIs...</span>
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
           {/* Main Input Field */}
           <div className="relative flex-1 min-w-0">
             <form
@@ -1212,6 +1571,7 @@ export const SmartAiPal: React.FC<SmartAiPalProps> = ({
               className="flex items-center w-full"
             >
               <input
+                ref={inputRef}
                 id="smart-ai-pal-input"
                 type="text"
                 value={inputText}
@@ -1272,6 +1632,54 @@ export const SmartAiPal: React.FC<SmartAiPalProps> = ({
               <Send className="w-4 h-4" />
             )}
             <span className="hidden sm:inline">Ask</span>
+          </button>
+
+          {/* Vertical Divider */}
+          <div className="h-6 w-px bg-[#23314F] mx-0.5 shrink-0 hidden xs:block" />
+
+          {/* Peek Beneath Button: Temporarily makes the bar see-through so user can interact with scrollbars and table rows underneath */}
+          <button
+            type="button"
+            id="smart-ai-pal-peek-btn"
+            onClick={() => setIsPeeking(!isPeeking)}
+            className={`p-1.5 sm:p-2 rounded-xl transition-colors cursor-pointer shrink-0 ${
+              isPeeking
+                ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                : "text-slate-400 hover:text-amber-300 hover:bg-amber-500/10"
+            }`}
+            title="Peek beneath: Click to make bar see-through so you can scroll or click table rows underneath"
+          >
+            {isPeeking ? <EyeOff className="w-4 h-4 text-amber-400" /> : <Eye className="w-4 h-4" />}
+          </button>
+
+          {/* Dock Position Toggle: Center vs Corner */}
+          <button
+            type="button"
+            id="smart-ai-pal-dock-pos-btn"
+            onClick={handleToggleDockPosition}
+            className={`hidden md:flex p-1.5 sm:p-2 rounded-xl transition-colors cursor-pointer shrink-0 ${
+              dockPosition === "right"
+                ? "text-sky-300 bg-sky-500/20 border border-sky-500/40"
+                : "text-slate-400 hover:text-white hover:bg-slate-800/60"
+            }`}
+            title={
+              dockPosition === "right"
+                ? "Docked Right: Click to center AI bar"
+                : "Dock to Corner: Move AI bar to right corner to leave center tables & scrollbars unblocked"
+            }
+          >
+            <MoveHorizontal className="w-4 h-4" />
+          </button>
+
+          {/* Minimize Button: Collapses into sleek compact corner launcher */}
+          <button
+            type="button"
+            id="smart-ai-pal-minimize-btn"
+            onClick={() => handleSetMinimized(true)}
+            className="p-1.5 sm:p-2 text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-xl transition-colors cursor-pointer shrink-0"
+            title="Minimize AI search bar to corner pill (unblocks all scrollbars) • Ctrl+K or Esc"
+          >
+            <Minus className="w-4 h-4" />
           </button>
         </div>
       </div>

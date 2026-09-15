@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import Markdown from "react-markdown";
 import { WbsItem, RaidItem, Stakeholder, ChangeRequest, EvmMetrics } from "../types";
 import {
   FileCheck2,
@@ -243,8 +244,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
         <div className="p-4 sm:p-6">
           {generatedReport ? (
-            <div className="font-sans text-slate-200 text-sm leading-relaxed whitespace-pre-wrap bg-[#060911] p-6 rounded-xl border border-[#1E293B]">
-              {generatedReport}
+            <div className="markdown-content text-slate-200 text-sm leading-relaxed space-y-3 bg-[#060911] p-6 rounded-xl border border-[#1E293B] [&>h1]:text-lg [&>h1]:font-bold [&>h1]:text-white [&>h1]:border-b [&>h1]:border-[#1E293B] [&>h1]:pb-2 [&>h1]:mb-3 [&>h2]:text-sm [&>h2]:font-bold [&>h2]:text-sky-300 [&>h2]:mt-4 [&>h2]:mb-2 [&>p]:mb-2 [&>ul]:list-disc [&>ul]:pl-5 [&>ul]:space-y-1 [&>ol]:list-decimal [&>ol]:pl-5 [&>ol]:space-y-1 [&_strong]:text-white [&_strong]:font-semibold [&_code]:bg-[#141E33] [&_code]:border [&_code]:border-sky-500/25 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-sky-300 [&_code]:font-mono [&_code]:text-xs [&_table]:w-full [&_table]:border-collapse [&_table]:my-3 [&_th]:border [&_th]:border-slate-700 [&_th]:px-3 [&_th]:py-1.5 [&_th]:bg-slate-800/80 [&_th]:text-slate-100 [&_th]:text-left [&_th]:text-xs [&_th]:font-semibold [&_td]:border [&_td]:border-slate-800 [&_td]:px-3 [&_td]:py-1.5 [&_td]:text-xs [&_blockquote]:border-l-2 [&_blockquote]:border-sky-500 [&_blockquote]:pl-3 [&_blockquote]:italic [&_blockquote]:text-slate-400">
+              <Markdown>{generatedReport}</Markdown>
             </div>
           ) : (
             <div className="text-center py-16 px-4">

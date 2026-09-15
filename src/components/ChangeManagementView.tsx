@@ -26,6 +26,7 @@ import {
 
 export interface ChangeManagementViewProps {
   changeRequests: ChangeRequest[];
+  allProjectChangeRequests?: ChangeRequest[];
   stakeholders: Stakeholder[];
   sprints?: Sprint[];
   wbsItems?: WbsItem[];

@@ -43,6 +43,7 @@ import {
   suggestChildType,
   getChildTypeLabel,
 } from "../utils/wbsRollup";
+import { getStakeholderHourlyRate } from "../utils/wbsTimerUtils";
 import { getStatusConfig, getProgressForStatus } from "../utils/statusConfig";
 import { DEFAULT_SPRINTS } from "../data/sprintsData";
 import { DEFAULT_PROJECTS } from "../data/projectsData";
@@ -246,6 +247,37 @@ export const CreateWorkItemModal: React.FC<CreateWorkItemModalProps> = ({
       (p) => p.id === selectedSprint?.projectId || p.name === selectedSprint?.projectGroup
     );
 
+    // Resolve stakeholder hourly rate
+    const hourlyRate = getStakeholderHourlyRate(
+      { assignedStakeholderIds, assignedStakeholderId: assignedStakeholderIds[0] },
+      stakeholders
+    );
+    const estHours = Number(estimatedHours) || 0;
+    // Estimated Cost = Hourly Rate * Estimated Hours
+    const calcPlannedBudget = Math.round(hourlyRate * estHours);
+    // Progress % is automatically linked to status rule
+    const calcProgressPercent = currentStatusConfig.progressPercent ?? 0;
+
+    // Timer and state initializations
+    let initialInProgressStartedAt: string | undefined = undefined;
+    let initialBlockedStartedAt: string | undefined = undefined;
+    let initialOnHoldStartedAt: string | undefined = undefined;
+    let initialActualHours = 0;
+    let initialActiveWorkSeconds = 0;
+
+    if (status === "In Progress") {
+      initialInProgressStartedAt = new Date().toISOString();
+    } else if (status === "Blocked") {
+      initialBlockedStartedAt = new Date().toISOString();
+    } else if (status === "On Hold" || status === "Hold") {
+      initialOnHoldStartedAt = new Date().toISOString();
+    } else if (status === "Demoable" || status === "Done") {
+      initialActualHours = estHours > 0 ? estHours : 8;
+      initialActiveWorkSeconds = Math.round(initialActualHours * 3600);
+    }
+
+    const calcActualCost = Math.round(hourlyRate * initialActualHours);
+
     const newItem: WbsItem = {
       id: `wbs-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
       wbsCode: wbsCode || `${wbsItems.length + 1}.0`,
@@ -254,11 +286,11 @@ export const CreateWorkItemModal: React.FC<CreateWorkItemModalProps> = ({
       parentId: selectedParentId || null,
       status,
       priority,
-      estimatedHours: Number(estimatedHours) || 0,
-      actualHours: Number(actualHours) || 0,
-      plannedBudget: Number(plannedBudget) || 0,
-      actualCost: Number(actualHours) * (stakeholders.find((s) => s.id === assignedStakeholderIds[0])?.hourlyRate || 100),
-      progressPercent,
+      estimatedHours: estHours,
+      actualHours: initialActualHours,
+      plannedBudget: calcPlannedBudget,
+      actualCost: calcActualCost,
+      progressPercent: calcProgressPercent,
       assignedStakeholderId: assignedStakeholderIds[0] || "",
       assignedStakeholderIds,
       startDate,
@@ -270,6 +302,13 @@ export const CreateWorkItemModal: React.FC<CreateWorkItemModalProps> = ({
       sprintId: selectedSprint?.id,
       sprintName: selectedSprint?.name,
       checklist: checklist.length > 0 ? checklist : undefined,
+      inProgressStartedAt: initialInProgressStartedAt,
+      blockedStartedAt: initialBlockedStartedAt,
+      onHoldStartedAt: initialOnHoldStartedAt,
+      activeWorkSeconds: initialActiveWorkSeconds,
+      totalBlockedDurationSeconds: 0,
+      totalOnHoldDurationSeconds: 0,
+      lastStatusChangeAt: new Date().toISOString(),
     };
 
     onSubmit(newItem, createAnother);
@@ -293,6 +332,14 @@ export const CreateWorkItemModal: React.FC<CreateWorkItemModalProps> = ({
   const currentStatusConfig = getStatusConfig(status, statusConfigs);
   const selectedSprint = sprints.find((s) => s.id === selectedSprintId);
   const selectedParent = wbsItems.find((i) => i.id === selectedParentId);
+
+  const currentHourlyRate = getStakeholderHourlyRate(
+    { assignedStakeholderIds, assignedStakeholderId: assignedStakeholderIds[0] },
+    stakeholders
+  );
+  const currentEstHours = Number(estimatedHours) || 0;
+  const currentAutoEstimatedCost = Math.round(currentHourlyRate * currentEstHours);
+  const primaryAssigneeObj = stakeholders.find((s) => s.id === assignedStakeholderIds[0]);
 
   // Grouped Sprints by Project
   const sprintGroups = sprints.reduce((acc, sprint) => {
@@ -1075,62 +1122,87 @@ export const CreateWorkItemModal: React.FC<CreateWorkItemModalProps> = ({
                   </div>
                 </div>
 
-                {/* Hours & Budget Grid */}
-                <div className="grid grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-slate-400 font-mono text-[11px] mb-1">Estimated Hours</label>
-                    <input
-                      type="number"
-                      value={estimatedHours}
-                      onChange={(e) => setEstimatedHours(Number(e.target.value))}
-                      className="w-full bg-[#181C28] border border-[#2B3247] rounded-lg px-2.5 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-slate-400 font-mono text-[11px] mb-1">Actual Hours</label>
-                    <input
-                      type="number"
-                      value={actualHours}
-                      onChange={(e) => setActualHours(Number(e.target.value))}
-                      className="w-full bg-[#181C28] border border-[#2B3247] rounded-lg px-2.5 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-slate-400 font-mono text-[11px] mb-1">Planned Budget ($)</label>
-                    <input
-                      type="number"
-                      value={plannedBudget}
-                      onChange={(e) => setPlannedBudget(Number(e.target.value))}
-                      className="w-full bg-[#181C28] border border-[#2B3247] rounded-lg px-2.5 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                </div>
+                {/* Estimated Hours & Automated Cost Roll-up Display */}
+                <div className="space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-slate-400 font-mono text-[11px] mb-1">
+                        Estimated Hours
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.5"
+                          value={estimatedHours}
+                          onChange={(e) => setEstimatedHours(Number(e.target.value))}
+                          className="w-full bg-[#181C28] border border-[#2B3247] rounded-lg px-2.5 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-indigo-500"
+                        />
+                        <span className="absolute right-2.5 top-1.5 text-[11px] text-slate-500 font-mono">
+                          hrs
+                        </span>
+                      </div>
+                    </div>
 
-                {/* Progress % & Critical Path */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                  <div>
-                    <label className="block text-slate-400 font-mono text-[11px] mb-1 flex items-center justify-between">
-                      <span>Progress Percentage</span>
-                      <span className="text-[10px] text-indigo-400">
-                        Auto: {currentStatusConfig.progressPercent}%
-                      </span>
-                    </label>
-                    <input
-                      type="number"
-                      min={0}
-                      max={100}
-                      value={progressPercent}
-                      onChange={(e) => setProgressPercent(Number(e.target.value))}
-                      className="w-full bg-[#181C28] border border-[#2B3247] rounded-lg px-2.5 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-indigo-500"
-                    />
+                    <div>
+                      <label className="block text-slate-400 font-mono text-[11px] mb-1 flex items-center justify-between">
+                        <span>Auto Estimated Cost</span>
+                        <span className="text-[10px] text-emerald-400 font-medium">
+                          ${currentHourlyRate}/hr rate
+                        </span>
+                      </label>
+                      <div className="w-full bg-[#101420] border border-[#23293D] rounded-lg px-2.5 py-1.5 flex items-center justify-between">
+                        <span className="text-white font-mono text-xs font-bold">
+                          ${currentAutoEstimatedCost.toLocaleString()}
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-mono truncate ml-2">
+                          {currentEstHours}h × ${currentHourlyRate}/hr ({primaryAssigneeObj ? primaryAssigneeObj.name : "Rate"})
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex items-center pt-5">
-                    <label className="flex items-center gap-2 cursor-pointer text-slate-300">
+
+                  {/* Automated Progress & Live Timer Status Info */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="bg-[#101420] border border-[#23293D] rounded-lg p-2.5 flex items-center justify-between">
+                      <div>
+                        <span className="text-[10px] text-slate-400 font-mono block">
+                          Progress % (Auto-calculated)
+                        </span>
+                        <span className="text-white font-mono text-xs font-bold flex items-center gap-1.5 mt-0.5">
+                          <span className="w-2 h-2 rounded-full bg-indigo-400 inline-block" />
+                          {currentStatusConfig.progressPercent}%
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-indigo-300 font-mono bg-indigo-950/60 px-2 py-0.5 rounded border border-indigo-800/60">
+                        Rule: {status}
+                      </span>
+                    </div>
+
+                    <div className="bg-[#101420] border border-[#23293D] rounded-lg p-2.5 flex items-center justify-between">
+                      <div>
+                        <span className="text-[10px] text-slate-400 font-mono block">
+                          Actual Hours & Cost
+                        </span>
+                        <span className="text-slate-300 font-mono text-[11px] mt-0.5 block">
+                          Auto-tracked via State Timer
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-sky-300 font-mono bg-sky-950/60 px-2 py-0.5 rounded border border-sky-800/60 flex items-center gap-1">
+                        <Clock className="w-3 h-3 text-sky-400" />
+                        In Progress → Demoable
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Critical Path Toggle */}
+                  <div className="pt-1">
+                    <label className="flex items-center gap-2 cursor-pointer text-slate-300 text-xs">
                       <input
                         type="checkbox"
                         checked={isCriticalPath}
                         onChange={(e) => setIsCriticalPath(e.target.checked)}
-                        className="rounded border-slate-700 text-indigo-600 focus:ring-indigo-500 bg-slate-900"
+                        className="rounded border-slate-700 text-indigo-600 focus:ring-indigo-500 bg-slate-900 cursor-pointer"
                       />
                       <span>Tag as Critical Path (directly impacts EVM finish)</span>
                     </label>

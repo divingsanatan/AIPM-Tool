@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { WbsItem, Stakeholder, WorkItemStatus, PriorityLevel, WbsType, StatusConfig } from "../types";
+import { WbsItem, Stakeholder, WorkItemStatus, PriorityLevel, WbsType, StatusConfig, Project, Sprint } from "../types";
 import {
   List,
   LayoutGrid,
@@ -19,6 +19,7 @@ import {
   Trash2,
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
   CircleDashed,
   CheckCircle2,
   AlertTriangle,
@@ -30,6 +31,10 @@ import {
   Layers,
   Inbox,
   Sliders,
+  GanttChart,
+  Flame,
+  GitBranch,
+  Link2,
 } from "lucide-react";
 import {
   getParentId,
@@ -47,6 +52,18 @@ import {
   getProgressForStatus,
 } from "../utils/statusConfig";
 import { StatusManagerModal } from "./StatusManagerModal";
+import {
+  transitionWorkItemStatus,
+  formatDurationSeconds,
+  getTotalBlockedSeconds,
+  getActiveWorkSeconds,
+} from "../utils/wbsTimerUtils";
+import {
+  calculateCpm,
+  resolveEffectiveDependencies,
+  PmiDependency,
+} from "../utils/pmiGanttUtils";
+import { GanttChartView } from "./GanttChartView";
 
 interface WbsCleanTreeProps {
   wbsItems: WbsItem[];
@@ -60,9 +77,15 @@ interface WbsCleanTreeProps {
   onUpdateStatusConfigs?: (newConfigs: StatusConfig[]) => void;
   onSyncAllTasks?: () => void;
   onApplyStatusProgressToTasks?: (statusKey: string, newProgress: number) => void;
+  projects?: Project[];
+  sprints?: Sprint[];
+  activeProjectId?: string;
+  selectedSprintId?: string | null;
+  onSelectProject?: (id: string) => void;
+  onSelectSprint?: (sprintId: string | null) => void;
 }
 
-export type WbsTabType = "List" | "Board" | "Calendar" | "Mind Map" | "Sprint Reporting";
+export type WbsTabType = "List" | "Gantt" | "Board" | "Calendar" | "Mind Map" | "Sprint Reporting";
 
 export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
   wbsItems,
@@ -76,9 +99,17 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
   onUpdateStatusConfigs,
   onSyncAllTasks,
   onApplyStatusProgressToTasks,
+  projects = [],
+  sprints = [],
+  activeProjectId,
+  selectedSprintId = null,
+  onSelectProject,
+  onSelectSprint,
 }) => {
   const [activeTab, setActiveTab] = useState<WbsTabType>("List");
   const [showDetailedEvm, setShowDetailedEvm] = useState(false);
+  const [highlightCriticalPath, setHighlightCriticalPath] = useState(false);
+  const [showDependencies, setShowDependencies] = useState(false);
   const [groupBy, setGroupBy] = useState<"status" | "hierarchy">("status");
   const [isStatusManagerOpen, setIsStatusManagerOpen] = useState(false);
   const [focusedStatusForConfig, setFocusedStatusForConfig] = useState<string | undefined>(undefined);
@@ -102,9 +133,31 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
 
   const [nomenclatureStyle, setNomenclatureStyle] = useState<"smart" | "micro">("smart");
   const [quickAssignItemId, setQuickAssignItemId] = useState<string | null>(null);
+  const [statusDropdownItemId, setStatusDropdownItemId] = useState<string | null>(null);
   const [quickAssignSearch, setQuickAssignSearch] = useState("");
   const [quickAssignFilter, setQuickAssignFilter] = useState<"all" | "unassigned">("all");
   const [selectedLevelFilter, setSelectedLevelFilter] = useState<WbsType | "ALL">("ALL");
+  const [includeBacklogInBoard, setIncludeBacklogInBoard] = useState<boolean>(false);
+
+  const handleShiftColumn = (colKey: string, direction: "left" | "right") => {
+    if (!onUpdateStatusConfigs) return;
+    const currentList = statusConfigs && statusConfigs.length > 0 ? [...statusConfigs] : [...DEFAULT_STATUS_CONFIGS];
+    const sorted = [...currentList].sort((a, b) => a.order - b.order);
+    const index = sorted.findIndex((c) => c.key.toLowerCase() === colKey.toLowerCase());
+    if (index === -1) return;
+    const targetIndex = direction === "left" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= sorted.length) return;
+
+    const temp = sorted[index];
+    sorted[index] = sorted[targetIndex];
+    sorted[targetIndex] = temp;
+
+    const reordered = sorted.map((item, idx) => ({
+      ...item,
+      order: idx + 1,
+    }));
+    onUpdateStatusConfigs(reordered);
+  };
 
   const handleToggleAssignee = (item: WbsItem, stakeholderId: string) => {
     const currentAssignees =
@@ -183,6 +236,20 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
     });
     return map;
   }, [wbsItems]);
+
+  // Critical Path Method (CPM) and PMI Dependencies calculations
+  const cpm = useMemo(() => calculateCpm(wbsItems), [wbsItems]);
+  const effectiveDependencies = useMemo(() => resolveEffectiveDependencies(wbsItems), [wbsItems]);
+  const predecessorsMap = useMemo(() => {
+    const map = new Map<string, PmiDependency[]>();
+    for (const dep of effectiveDependencies) {
+      if (!map.has(dep.successorId)) {
+        map.set(dep.successorId, []);
+      }
+      map.get(dep.successorId)!.push(dep);
+    }
+    return map;
+  }, [effectiveDependencies]);
 
   // Leaf work packages (items with no children, whose estimates constitute 100% of project work)
   const leafItems = useMemo(() => {
@@ -288,7 +355,7 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
     return <span className={`inline-block w-2.5 h-2.5 rounded-full ${cfg.dotColor}`} />;
   };
 
-  // Intelligent quick-status transition with automatic progress marking
+  // Intelligent quick-status transition with automatic timer tracking and cost rollup
   const handleQuickStatusChange = (item: WbsItem, e: React.MouseEvent) => {
     e.stopPropagation();
     let nextStatus: WorkItemStatus = "In Progress";
@@ -303,20 +370,28 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
       nextStatus = "Done";
     } else if (item.status === "Blocked") {
       nextStatus = "In Progress";
-    } else if (item.status === "Done") {
+    } else if (item.status === "Hold" || item.status === "On Hold") {
       nextStatus = "In Progress";
+    } else if (item.status === "Done") {
+      nextStatus = "To Do";
     } else {
       nextStatus = "Done";
     }
 
-    // Automatically mark progress linked to the status
-    const nextProgress = getProgressForStatus(nextStatus, statusConfigs);
+    const updated = transitionWorkItemStatus(item, nextStatus, stakeholders, statusConfigs);
+    onUpdateWbsItem(updated);
+  };
 
-    onUpdateWbsItem({
-      ...item,
-      status: nextStatus,
-      progressPercent: nextProgress,
-    });
+  // Direct status transition to arbitrary status (e.g., Blocked, On Hold, etc.)
+  const handleDirectStatusChange = (
+    item: WbsItem,
+    nextStatus: WorkItemStatus,
+    e?: React.MouseEvent
+  ) => {
+    if (e) e.stopPropagation();
+    const updated = transitionWorkItemStatus(item, nextStatus, stakeholders, statusConfigs);
+    onUpdateWbsItem(updated);
+    setStatusDropdownItemId(null);
   };
 
   // Recursive deliverable and task row renderer supporting arbitrary hierarchy depth
@@ -334,12 +409,16 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
     const blockedChildrenCount = children.filter((c) => c.status === "Blocked").length;
     const nom = getCompactNomenclature(item.type);
     const itemAssignees = getItemAssignees(item, stakeholders);
+    const isItemCritical = highlightCriticalPath && cpm.criticalPathIds.has(item.id);
+    const itemPreds = predecessorsMap.get(item.id) || [];
 
     return (
       <React.Fragment key={item.id}>
         <tr
           className={`group transition-colors ${
-            depth === 0
+            isItemCritical
+              ? "bg-rose-950/20 hover:bg-rose-950/30 border-l-2 border-l-rose-500 shadow-xs"
+              : depth === 0
               ? "hover:bg-[#0E1526]/80"
               : "hover:bg-[#0E1526]/60 bg-[#0B0F19]/40 border-t border-[#1E293B]/20"
           }`}
@@ -370,15 +449,69 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
                 <span className="w-4 inline-block shrink-0" />
               )}
 
-              {/* Status Indicator / Quick Advance Button */}
-              <button
-                type="button"
-                onClick={(e) => handleQuickStatusChange(item, e)}
-                className="shrink-0 p-0.5 rounded hover:bg-slate-800 transition-colors cursor-pointer"
-                title={`Status: ${item.status} (Click to advance/toggle)`}
-              >
-                {renderStatusIcon(item.status)}
-              </button>
+              {/* Status Indicator / Quick Advance Button & Dropdown */}
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={(e) => handleQuickStatusChange(item, e)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setStatusDropdownItemId(statusDropdownItemId === item.id ? null : item.id);
+                  }}
+                  className="shrink-0 p-0.5 rounded hover:bg-slate-800 transition-colors cursor-pointer"
+                  title={`Status: ${item.status} (Click to advance, right-click to choose any status)`}
+                >
+                  {renderStatusIcon(item.status)}
+                </button>
+
+                {/* Direct Status Selector Popover */}
+                {statusDropdownItemId === item.id && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setStatusDropdownItemId(null);
+                      }}
+                    />
+                    <div
+                      className="absolute left-0 top-full mt-1 w-48 bg-[#0F172A] border border-slate-700 rounded-lg shadow-2xl p-1 z-50 text-left animate-in fade-in zoom-in-95 duration-100"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="text-[10px] font-mono text-slate-400 px-2 py-1 border-b border-slate-800 font-bold flex items-center justify-between">
+                        <span>Workflow Status</span>
+                        <span className="text-[9px] text-sky-400">Timer sync</span>
+                      </div>
+                      <div className="py-0.5 space-y-0.5">
+                        {statusConfigs.map((cfg) => {
+                          const isSelected = item.status === cfg.key;
+                          return (
+                            <button
+                              key={cfg.key}
+                              type="button"
+                              onClick={(e) => handleDirectStatusChange(item, cfg.key as WorkItemStatus, e)}
+                              className={`w-full flex items-center justify-between px-2 py-1 rounded text-xs text-left cursor-pointer transition-colors ${
+                                isSelected
+                                  ? "bg-sky-950/80 text-sky-200 font-semibold"
+                                  : "hover:bg-slate-800 text-slate-300"
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className={`w-2 h-2 rounded-full shrink-0 ${cfg.dotColor}`} />
+                                <span className="truncate">{cfg.label}</span>
+                              </div>
+                              <span className="text-[10px] font-mono text-slate-500">
+                                {cfg.progressPercent}%
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
 
               {/* Space-Saving Nomenclature Badge */}
               <span
@@ -436,8 +569,13 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
 
                   {/* Status pill if different from parent section */}
                   {item.status !== currentSectionStatus && (
-                    <span
-                      className={`text-[10px] font-mono px-1.5 py-0.2 rounded border font-medium ${
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setStatusDropdownItemId(statusDropdownItemId === item.id ? null : item.id);
+                      }}
+                      className={`text-[10px] font-mono px-1.5 py-0.2 rounded border font-medium cursor-pointer transition-colors hover:brightness-125 ${
                         item.status === "Blocked"
                           ? "bg-rose-500/15 text-rose-300 border-rose-500/30"
                           : item.status === "In Progress"
@@ -448,9 +586,73 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
                           ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
                           : "bg-slate-700/40 text-slate-300 border-slate-600/40"
                       }`}
+                      title="Click to switch status"
                     >
                       {item.status}
+                    </button>
+                  )}
+
+                  {/* Active Work Timer badge */}
+                  {item.status === "In Progress" && (
+                    <span
+                      className="inline-flex items-center gap-1 text-[10px] text-sky-300 font-mono px-1.5 py-0.2 rounded bg-sky-500/15 border border-sky-500/30 font-medium"
+                      title="Active Work Timer (In Progress → Demoable)"
+                    >
+                      <Clock className="h-2.5 w-2.5 text-sky-400" />
+                      <span>Active {formatDurationSeconds(getActiveWorkSeconds(item))}</span>
                     </span>
+                  )}
+
+                  {/* Blocked Duration Live badge */}
+                  {item.status === "Blocked" && (
+                    <span
+                      className="inline-flex items-center gap-1 text-[10px] text-rose-300 font-mono px-1.5 py-0.2 rounded bg-rose-500/20 border border-rose-500/40 font-bold"
+                      title={`Currently Blocked: Timer paused until moved back to In Progress or Demoable. Duration: ${formatDurationSeconds(getTotalBlockedSeconds(item))}`}
+                    >
+                      <AlertTriangle className="h-2.5 w-2.5 text-rose-400" />
+                      <span>Blocked {formatDurationSeconds(getTotalBlockedSeconds(item))}</span>
+                    </span>
+                  )}
+
+                  {/* Historical Blocked Time for unblocked items */}
+                  {item.status !== "Blocked" && getTotalBlockedSeconds(item) > 0 && (
+                    <span
+                      className="inline-flex items-center gap-1 text-[10px] text-slate-400 font-mono px-1.5 py-0.2 rounded bg-slate-800/50 border border-slate-700/50"
+                      title={`Total historical time spent in Blocked status: ${formatDurationSeconds(getTotalBlockedSeconds(item))}`}
+                    >
+                      <span className="text-rose-400 font-bold">⛔</span>
+                      <span>Blocked: {formatDurationSeconds(getTotalBlockedSeconds(item))}</span>
+                    </span>
+                  )}
+
+                  {/* Critical Path Indicator */}
+                  {highlightCriticalPath && cpm.criticalPathIds.has(item.id) && (
+                    <span
+                      className="inline-flex items-center gap-1 text-[10px] text-rose-300 font-mono px-1.5 py-0.2 rounded bg-rose-500/20 border border-rose-500/50 font-bold shadow-xs"
+                      title="Critical Path Activity: Total Float = 0 days. Any delay directly extends project duration."
+                    >
+                      <Flame className="h-2.5 w-2.5 text-rose-400 animate-pulse" />
+                      <span>CPM • Critical Path</span>
+                    </span>
+                  )}
+
+                  {/* PMI Dependencies Chips */}
+                  {showDependencies && itemPreds.length > 0 && (
+                    <div className="inline-flex items-center gap-1 flex-wrap">
+                      {itemPreds.map((dep, idx) => {
+                        const predItem = wbsItems.find((w) => w.id === dep.predecessorId);
+                        return (
+                          <span
+                            key={idx}
+                            className="inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.2 rounded bg-sky-950/80 text-sky-300 border border-sky-800/60"
+                            title={`PMI Predecessor: [${predItem?.wbsCode || ""}] ${predItem?.title || dep.predecessorId} (${dep.type}${dep.lagDays ? ` +${dep.lagDays}d` : ""})`}
+                          >
+                            <Link2 className="h-2 w-2 text-sky-400 shrink-0" />
+                            <span>{predItem?.wbsCode || "Pred"} ({dep.type})</span>
+                          </span>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
               </div>
@@ -769,13 +971,13 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
   };
 
   // Group items by status dynamically using statusConfigs (supporting custom statuses and automatic progress)
-  // Default order:
-  // 1. DONE (at the top - 100%)
-  // 2. DEMO READY (60%)
+  // Default workflow order:
+  // 1. TO DO (0%)
+  // 2. IN PROGRESS (40%)
   // 3. BLOCKED (50%)
-  // 4. IN PROGRESS (40%)
-  // 5. TO DO (0%)
-  // 6. BACKLOG (0% - at bottom)
+  // 4. DEMO READY (60%)
+  // 5. DONE (100%)
+  // 6. BACKLOG (0%)
   // 7+. Custom Statuses
   const statusGroups: {
     key: string;
@@ -789,6 +991,7 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
     badgeText?: string;
     badgeBorder?: string;
     isDefault?: boolean;
+    order: number;
   }[] = useMemo(() => {
     const list = statusConfigs && statusConfigs.length > 0 ? statusConfigs : DEFAULT_STATUS_CONFIGS;
 
@@ -797,7 +1000,10 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
         ? wbsItems.filter((i) => !isItemAssigned(i))
         : wbsItems;
 
-    return list.map((conf) => {
+    // Ensure list is strictly ordered by config order (To Do first, then In Progress, etc.)
+    const sortedList = [...list].sort((a, b) => a.order - b.order);
+
+    return sortedList.map((conf) => {
       const items = baseItems.filter((i) => {
         const itemConfig = getStatusConfig(i.status, list);
         return itemConfig.key.toLowerCase() === conf.key.toLowerCase();
@@ -815,9 +1021,26 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
         badgeText: conf.badgeText,
         badgeBorder: conf.badgeBorder,
         isDefault: conf.isDefault,
+        order: conf.order,
       };
     });
   }, [wbsItems, quickAssignFilter, statusConfigs]);
+
+  // Board / Kanban columns: By default starts with TO DO -> IN PROGRESS -> BLOCKED -> DEMO READY -> DONE
+  // If includeBacklogInBoard is enabled, Backlog appears as the intake staging column at the start.
+  const boardColumns = useMemo(() => {
+    if (includeBacklogInBoard) {
+      const backlogCol = statusGroups.find((c) => c.key.toLowerCase() === "backlog");
+      const activeCols = statusGroups.filter((c) => c.key.toLowerCase() !== "backlog");
+      return backlogCol ? [backlogCol, ...activeCols] : statusGroups;
+    }
+    return statusGroups.filter((c) => c.key.toLowerCase() !== "backlog");
+  }, [statusGroups, includeBacklogInBoard]);
+
+  const backlogCount = useMemo(() => {
+    const bgCol = statusGroups.find((c) => c.key.toLowerCase() === "backlog");
+    return bgCol ? bgCol.items.length : 0;
+  }, [statusGroups]);
 
   return (
     <div className="bg-[#090D16] border border-[#1E293B] rounded-xl shadow-xl overflow-hidden font-sans">
@@ -834,6 +1057,21 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
           >
             <List className="h-4 w-4 text-white" />
             <span>List</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("Gantt")}
+            className={`flex items-center gap-2 px-3 py-3 font-semibold transition-colors border-b-2 cursor-pointer whitespace-nowrap ${
+              activeTab === "Gantt"
+                ? "border-emerald-400 text-white"
+                : "border-transparent text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <GanttChart className="h-4 w-4 text-emerald-400" />
+            <span>Gantt Chart</span>
+            <span className="px-1.5 py-0.2 rounded text-[9px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+              PMI
+            </span>
           </button>
 
           <button
@@ -885,8 +1123,52 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
           </button>
         </div>
 
-        {/* View Options Toggle */}
+        {/* View Options Toggle & PMI Visual Toggles */}
         <div className="flex items-center gap-2 py-1.5 shrink-0 pl-2">
+          {/* Critical Path Toggle */}
+          <button
+            type="button"
+            onClick={() => setHighlightCriticalPath(!highlightCriticalPath)}
+            className={`px-2.5 py-1 rounded text-[11px] font-mono flex items-center gap-1.5 transition-all cursor-pointer border ${
+              highlightCriticalPath
+                ? "bg-rose-500/20 text-rose-300 border-rose-500/50 font-bold shadow-xs ring-1 ring-rose-500/30"
+                : "bg-[#141C2E] text-slate-400 border-[#1E293B] hover:text-white hover:border-slate-700"
+            }`}
+            title="PMI CPM: Highlight all work items on the Critical Path (zero total float)"
+          >
+            <Flame className={`h-3.5 w-3.5 ${highlightCriticalPath ? "text-rose-400 animate-pulse" : "text-slate-400"}`} />
+            <span>Critical Path</span>
+            <span
+              className={`text-[10px] font-mono px-1 py-0.2 rounded ${
+                highlightCriticalPath ? "bg-rose-500/40 text-white font-bold" : "bg-slate-800 text-slate-400"
+              }`}
+            >
+              {cpm.criticalPathIds.size}
+            </span>
+          </button>
+
+          {/* PMI Dependencies Toggle */}
+          <button
+            type="button"
+            onClick={() => setShowDependencies(!showDependencies)}
+            className={`px-2.5 py-1 rounded text-[11px] font-mono flex items-center gap-1.5 transition-all cursor-pointer border ${
+              showDependencies
+                ? "bg-sky-500/20 text-sky-300 border-sky-500/50 font-bold shadow-xs ring-1 ring-sky-500/30"
+                : "bg-[#141C2E] text-slate-400 border-[#1E293B] hover:text-white hover:border-slate-700"
+            }`}
+            title="PMI PDM: Show dependencies between work items (Finish-to-Start, Start-to-Start, etc.)"
+          >
+            <GitBranch className={`h-3.5 w-3.5 ${showDependencies ? "text-sky-400" : "text-slate-400"}`} />
+            <span>PMI Dependencies</span>
+            <span
+              className={`text-[10px] font-mono px-1 py-0.2 rounded ${
+                showDependencies ? "bg-sky-500/40 text-white font-bold" : "bg-slate-800 text-slate-400"
+              }`}
+            >
+              {effectiveDependencies.length}
+            </span>
+          </button>
+
           <button
             onClick={() => setShowDetailedEvm(!showDetailedEvm)}
             className={`px-2.5 py-1 rounded text-[11px] font-mono flex items-center gap-1.5 transition-colors cursor-pointer border ${
@@ -1165,6 +1447,67 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
             </div>
           </div>
 
+          {/* Critical Path Active Banner */}
+          {highlightCriticalPath && (
+            <div className="mb-4 p-3 rounded-xl bg-rose-950/40 border border-rose-500/40 flex items-center justify-between text-xs text-rose-200">
+              <div className="flex items-center gap-2.5">
+                <div className="p-1.5 rounded-lg bg-rose-500/20 text-rose-300">
+                  <Flame className="h-4 w-4 animate-pulse" />
+                </div>
+                <div>
+                  <div className="font-bold text-white flex items-center gap-2">
+                    <span>Critical Path Highlight Active (PMI Critical Path Method)</span>
+                    <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-rose-500/30 text-rose-200 border border-rose-500/40">
+                      {cpm.criticalPathIds.size} Critical Work Items
+                    </span>
+                    <span className="text-slate-400 font-normal">
+                      • Duration: {cpm.totalProjectDurationDays} days
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-rose-300/80 mt-0.5">
+                    Items on the critical path have zero total float (TF = 0d). Any delay on these items directly delays the project completion date. Highlighted with red left border and CPM badge.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHighlightCriticalPath(false)}
+                className="text-[11px] font-semibold text-rose-300 hover:text-white px-2 py-1 rounded bg-rose-900/40 hover:bg-rose-900/80 border border-rose-700/50 cursor-pointer"
+              >
+                Hide Highlight
+              </button>
+            </div>
+          )}
+
+          {/* PMI Dependencies Active Banner */}
+          {showDependencies && (
+            <div className="mb-4 p-3 rounded-xl bg-sky-950/40 border border-sky-500/40 flex items-center justify-between text-xs text-sky-200">
+              <div className="flex items-center gap-2.5">
+                <div className="p-1.5 rounded-lg bg-sky-500/20 text-sky-300">
+                  <GitBranch className="h-4 w-4" />
+                </div>
+                <div>
+                  <div className="font-bold text-white flex items-center gap-2">
+                    <span>Precedence Diagramming Method (PDM) Dependencies Active</span>
+                    <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-sky-500/30 text-sky-200 border border-sky-500/40">
+                      {effectiveDependencies.length} Network Links
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-sky-300/80 mt-0.5">
+                    Displaying predecessor linkages for each task with standard PMI logical relationships: Finish-to-Start (FS), Start-to-Start (SS), Finish-to-Finish (FF), Start-to-Finish (SF).
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDependencies(false)}
+                className="text-[11px] font-semibold text-sky-300 hover:text-white px-2 py-1 rounded bg-sky-900/40 hover:bg-sky-900/80 border border-sky-700/50 cursor-pointer"
+              >
+                Hide Predecessors
+              </button>
+            </div>
+          )}
+
           {/* Status Group Sections */}
           {statusGroups.map((group) => {
             const isGroupOpen = expandedSections[group.key] ?? true;
@@ -1306,104 +1649,214 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
         </div>
       )}
 
+      {/* Gantt Chart View */}
+      {activeTab === "Gantt" && (
+        <div className="flex-1 min-h-[750px] flex flex-col bg-[#0B0F19] rounded-b-xl overflow-visible border-t border-[#1E293B]">
+          <GanttChartView
+            wbsItems={wbsItems}
+            stakeholders={stakeholders}
+            projects={projects}
+            sprints={sprints}
+            activeProjectId={activeProjectId}
+            selectedSprintId={selectedSprintId}
+            onSelectProject={onSelectProject}
+            onSelectSprint={onSelectSprint}
+            onUpdateWbsItem={onUpdateWbsItem}
+            onOpenEditModal={onOpenEditModal}
+            onOpenAddModal={onOpenAddModal}
+            initialHighlightCriticalPath={highlightCriticalPath}
+            initialShowDependencies={showDependencies}
+          />
+        </div>
+      )}
+
       {/* 5. Board / Kanban View */}
       {activeTab === "Board" && (
-        <div className="p-4 sm:p-5 overflow-x-auto">
-          <div className="flex items-start gap-3 min-w-max pb-2">
-            {statusGroups.map((col) => (
-              <div
-                key={col.key}
-                className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-3 flex flex-col h-[520px] w-72 shrink-0"
+        <div className="p-4 sm:p-5">
+          {/* Kanban Board Pipeline Bar */}
+          <div className="mb-3.5 flex flex-wrap items-center justify-between gap-2.5 p-2.5 rounded-xl bg-[#0B0F19] border border-[#1E293B] text-xs">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider font-mono">
+                Kanban Pipeline:
+              </span>
+              <div className="flex items-center gap-1.5 text-[11px] font-mono text-slate-300 flex-wrap">
+                <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-200 border border-slate-700 font-bold">
+                  TO DO
+                </span>
+                <span className="text-slate-500">➔</span>
+                <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 font-bold">
+                  IN PROGRESS
+                </span>
+                <span className="text-slate-500">➔</span>
+                <span className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold">
+                  BLOCKED
+                </span>
+                <span className="text-slate-500">➔</span>
+                <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold">
+                  DEMO READY
+                </span>
+                <span className="text-slate-500">➔</span>
+                <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">
+                  DONE
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIncludeBacklogInBoard(!includeBacklogInBoard)}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer border ${
+                  includeBacklogInBoard
+                    ? "bg-indigo-500/20 text-indigo-300 border-indigo-500/40 font-semibold shadow-xs"
+                    : "bg-[#141C2E] text-slate-400 border-[#1E293B] hover:text-white hover:border-slate-700"
+                }`}
+                title="Toggle Backlog intake staging column at the start of the board"
               >
-                <div className="flex items-center justify-between pb-2.5 mb-2 border-b border-[#1E293B]">
-                  <div className="flex items-center gap-1.5">
-                    {renderStatusIcon(col.status)}
-                    <span className="text-xs font-bold text-white uppercase tracking-wider">
-                      {col.label}
-                    </span>
-                    <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30">
-                      {col.progressPercent}%
-                    </span>
-                  </div>
-                  <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-[#141C2E] text-slate-300 border border-slate-700">
-                    {col.items.length}
-                  </span>
-                </div>
+                <Layers className="h-3.5 w-3.5 text-indigo-400" />
+                <span>{includeBacklogInBoard ? "Backlog Column Visible" : "Include Backlog Column"}</span>
+                <span className="px-1.5 py-0.2 rounded text-[10px] font-mono font-bold bg-indigo-500/30 text-indigo-200">
+                  {backlogCount}
+                </span>
+              </button>
 
-                <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
-                  {col.items.map((item) => {
-                    const nom = getCompactNomenclature(item.type);
-                    const itemAssignees = getItemAssignees(item, stakeholders);
-                    return (
-                      <div
-                        key={item.id}
-                        onClick={() => onOpenEditModal(item)}
-                        className="p-3 rounded-lg bg-[#060911] border border-[#1E293B] hover:border-sky-500/50 transition-all cursor-pointer shadow-xs space-y-2"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex items-center gap-1.5">
-                            <span className={`inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-mono font-bold border ${nom.bgColor} ${nom.color} ${nom.borderColor}`}>
-                              <span className="text-[10px] leading-none">{nom.symbol}</span>
-                              <span>{nom.short}</span>
-                            </span>
-                            <span className="font-mono text-[10px] text-sky-400">{item.wbsCode}</span>
-                          </div>
-                          {renderPriorityFlag(item)}
-                        </div>
-                        <h5 className="text-xs font-semibold text-white line-clamp-2">{item.title}</h5>
+              <button
+                type="button"
+                onClick={() => {
+                  setFocusedStatusForConfig(undefined);
+                  setIsStatusManagerOpen(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/40 text-indigo-300 hover:text-white text-xs font-semibold transition-all cursor-pointer shadow-xs"
+                title="Configure custom status order and automatic progress percentages"
+              >
+                <Sliders className="h-3.5 w-3.5" />
+                <span>Status & Progress Rules</span>
+              </button>
+            </div>
+          </div>
 
-                        <div className="flex items-center justify-between pt-1 text-[11px] text-slate-400 border-t border-[#1E293B]/40">
-                          <span className="text-[#F87171] font-mono">{formatShortDate(item.dueDate)}</span>
-                          {itemAssignees.length > 0 ? (
-                            <div className="flex items-center gap-1">
-                              <div className="flex -space-x-1">
-                                {itemAssignees.slice(0, 2).map((s) => (
-                                  <span key={s.id} className="h-3.5 w-3.5 rounded-full bg-sky-500/30 text-[8px] flex items-center justify-center text-sky-300 font-bold">
-                                    {s.name.charAt(0)}
-                                  </span>
-                                ))}
-                              </div>
-                              <span className="truncate max-w-[80px] text-slate-300 text-[10px]">
-                                {itemAssignees.length === 1 ? itemAssignees[0].name : `${itemAssignees.length} assigned`}
-                              </span>
-                            </div>
-                          ) : (
-                            <span className="text-slate-600 italic text-[10px]">Unassigned</span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => onOpenAddModal(null, col.status)}
-                  className="mt-2 py-1.5 w-full rounded border border-dashed border-[#1E293B] hover:border-slate-600 text-slate-400 hover:text-white text-xs font-medium flex items-center justify-center gap-1 transition-colors cursor-pointer"
+          <div className="overflow-x-auto">
+            <div className="flex items-start gap-3 min-w-max pb-2">
+              {boardColumns.map((col, colIdx) => (
+                <div
+                  key={col.key}
+                  className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-3 flex flex-col h-[520px] w-72 shrink-0"
                 >
-                  <Plus className="h-3 w-3" /> Add Task
-                </button>
-              </div>
-            ))}
+                  <div className="flex items-center justify-between pb-2.5 mb-2 border-b border-[#1E293B]">
+                    <div className="flex items-center gap-1.5">
+                      {renderStatusIcon(col.status)}
+                      <span className="text-xs font-bold text-white uppercase tracking-wider">
+                        {col.label}
+                      </span>
+                      <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                        {col.progressPercent}%
+                      </span>
+                      {col.key.toLowerCase() === "backlog" && (
+                        <span className="px-1 py-0.2 rounded text-[8px] font-mono font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                          INTAKE
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-[#141C2E] text-slate-300 border border-slate-700">
+                        {col.items.length}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={colIdx === 0}
+                        onClick={() => handleShiftColumn(col.key, "left")}
+                        className="p-1 text-slate-500 hover:text-white disabled:opacity-20 disabled:hover:text-slate-500 rounded hover:bg-slate-800 transition-colors cursor-pointer disabled:cursor-not-allowed"
+                        title="Move column left"
+                      >
+                        <ChevronLeft className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={colIdx === boardColumns.length - 1}
+                        onClick={() => handleShiftColumn(col.key, "right")}
+                        className="p-1 text-slate-500 hover:text-white disabled:opacity-20 disabled:hover:text-slate-500 rounded hover:bg-slate-800 transition-colors cursor-pointer disabled:cursor-not-allowed"
+                        title="Move column right"
+                      >
+                        <ChevronRight className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
 
-            {/* Add Status Column Action Tile */}
-            <div
-              onClick={() => {
-                setFocusedStatusForConfig(undefined);
-                setIsStatusManagerOpen(true);
-              }}
-              className="bg-[#0B0F19]/40 border-2 border-dashed border-[#1E293B] hover:border-purple-500/60 rounded-xl p-4 flex flex-col items-center justify-center gap-3 h-[520px] transition-all cursor-pointer group text-slate-500 hover:text-purple-300 w-72 shrink-0"
-            >
-              <div className="h-10 w-10 rounded-xl bg-purple-500/10 group-hover:bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-400 transition-colors">
-                <Plus className="h-5 w-5" />
-              </div>
-              <div className="text-center">
-                <p className="text-xs font-bold text-slate-300 group-hover:text-white">
-                  Add Status Column
-                </p>
-                <p className="text-[10px] text-slate-500 mt-0.5">
-                  Custom status & auto progress %
-                </p>
+                  <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
+                    {col.items.map((item) => {
+                      const nom = getCompactNomenclature(item.type);
+                      const itemAssignees = getItemAssignees(item, stakeholders);
+                      return (
+                        <div
+                          key={item.id}
+                          onClick={() => onOpenEditModal(item)}
+                          className="p-3 rounded-lg bg-[#060911] border border-[#1E293B] hover:border-sky-500/50 transition-all cursor-pointer shadow-xs space-y-2"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-1.5">
+                              <span className={`inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-mono font-bold border ${nom.bgColor} ${nom.color} ${nom.borderColor}`}>
+                                <span className="text-[10px] leading-none">{nom.symbol}</span>
+                                <span>{nom.short}</span>
+                              </span>
+                              <span className="font-mono text-[10px] text-sky-400">{item.wbsCode}</span>
+                            </div>
+                            {renderPriorityFlag(item)}
+                          </div>
+                          <h5 className="text-xs font-semibold text-white line-clamp-2">{item.title}</h5>
+
+                          <div className="flex items-center justify-between pt-1 text-[11px] text-slate-400 border-t border-[#1E293B]/40">
+                            <span className="text-[#F87171] font-mono">{formatShortDate(item.dueDate)}</span>
+                            {itemAssignees.length > 0 ? (
+                              <div className="flex items-center gap-1">
+                                <div className="flex -space-x-1">
+                                  {itemAssignees.slice(0, 2).map((s) => (
+                                    <span key={s.id} className="h-3.5 w-3.5 rounded-full bg-sky-500/30 text-[8px] flex items-center justify-center text-sky-300 font-bold">
+                                      {s.name.charAt(0)}
+                                    </span>
+                                  ))}
+                                </div>
+                                <span className="truncate max-w-[80px] text-slate-300 text-[10px]">
+                                  {itemAssignees.length === 1 ? itemAssignees[0].name : `${itemAssignees.length} assigned`}
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="text-slate-600 italic text-[10px]">Unassigned</span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => onOpenAddModal(null, col.status)}
+                    className="mt-2 py-1.5 w-full rounded border border-dashed border-[#1E293B] hover:border-slate-600 text-slate-400 hover:text-white text-xs font-medium flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                  >
+                    <Plus className="h-3 w-3" /> Add Task
+                  </button>
+                </div>
+              ))}
+
+              {/* Add Status Column Action Tile */}
+              <div
+                onClick={() => {
+                  setFocusedStatusForConfig(undefined);
+                  setIsStatusManagerOpen(true);
+                }}
+                className="bg-[#0B0F19]/40 border-2 border-dashed border-[#1E293B] hover:border-purple-500/60 rounded-xl p-4 flex flex-col items-center justify-center gap-3 h-[520px] transition-all cursor-pointer group text-slate-500 hover:text-purple-300 w-72 shrink-0"
+              >
+                <div className="h-10 w-10 rounded-xl bg-purple-500/10 group-hover:bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-400 transition-colors">
+                  <Plus className="h-5 w-5" />
+                </div>
+                <div className="text-center">
+                  <p className="text-xs font-bold text-slate-300 group-hover:text-white">
+                    Add Status Column
+                  </p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    Custom status & auto progress %
+                  </p>
+                </div>
               </div>
             </div>
           </div>

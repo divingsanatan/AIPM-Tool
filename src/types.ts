@@ -70,6 +70,15 @@ export interface WbsItem {
   sprintName?: string;
   checklist?: { id: string; text: string; completed: boolean }[];
   dependencies?: string[];
+  // Time Tracking & State Transition Timers (In Progress -> Demoable/Done, Pausing on Blocked/On Hold)
+  inProgressStartedAt?: string; // ISO timestamp when work transitioned to "In Progress"
+  activeWorkSeconds?: number; // Total cumulative active seconds worked
+  blockedStartedAt?: string; // ISO timestamp when work transitioned to "Blocked"
+  totalBlockedDurationSeconds?: number; // Total cumulative seconds spent on "Blocked"
+  onHoldStartedAt?: string; // ISO timestamp when work transitioned to "On Hold"
+  totalOnHoldDurationSeconds?: number; // Total cumulative seconds spent on "On Hold"
+  blockedReason?: string; // Cause or impediment details for blocked state
+  lastStatusChangeAt?: string; // Timestamp of last status change
 }
 
 export interface Stakeholder {
@@ -82,6 +91,7 @@ export interface Stakeholder {
   power: "High" | "Low";
   interest: "High" | "Low";
   engagement: "Unaware" | "Resistant" | "Neutral" | "Supportive" | "Leading";
+  avatarColor?: string;
   projectId?: string;
   projectIds?: string[];
   sprintIds?: string[];
@@ -97,6 +107,7 @@ export interface RaidItem {
   projectId?: string;
   sprintId?: string;
   wbsItemId?: string;
+  wbsItemIds?: string[];
   // Risk attributes
   probability?: 1 | 2 | 3 | 4 | 5; // 1: Very Low, 5: Very High
   impact?: 1 | 2 | 3 | 4 | 5; // 1: Very Low, 5: Very High
@@ -110,6 +121,9 @@ export interface RaidItem {
   // Dependency attributes
   dependencyType?: "Finish-to-Start (FS)" | "Start-to-Start (SS)" | "Finish-to-Finish (FF)" | "Start-to-Finish (SF)";
   upstreamDownstream?: "Upstream" | "Downstream";
+  predecessorTaskId?: string;
+  successorTaskId?: string;
+  leadLagDays?: number;
   // Assumption attributes
   impactIfFalse?: string;
   // Common attributes
@@ -209,9 +223,36 @@ export type Project = ProjectSettings;
 export type ActiveTab =
   | "dashboard"
   | "wbs"
+  | "gantt"
   | "stakeholders"
   | "raid"
   | "raci"
   | "change-management"
   | "documents"
   | "reports";
+
+export type AiProviderType =
+  | "gemini"
+  | "openai"
+  | "anthropic"
+  | "openrouter"
+  | "groq"
+  | "deepseek"
+  | "custom_openai"
+  | "local_pmi";
+
+export interface AiApiConfig {
+  id: string;
+  name: string;
+  provider: AiProviderType;
+  apiKey: string;
+  model: string;
+  baseUrl?: string;
+  temperature?: number;
+  isDefault?: boolean;
+  createdAt: string;
+  lastTestedAt?: string;
+  lastTestStatus?: "success" | "error";
+  lastTestError?: string;
+  lastLatencyMs?: number;
+}

@@ -62,6 +62,11 @@ import {
   DEFAULT_STATUS_CONFIGS,
   getStatusConfig,
 } from "../utils/statusConfig";
+import {
+  formatDurationSeconds,
+  getTotalBlockedSeconds,
+  getActiveWorkSeconds,
+} from "../utils/wbsTimerUtils";
 
 interface DashboardViewProps {
   wbsItems: WbsItem[];
@@ -87,7 +92,7 @@ interface DashboardViewProps {
   onOpenSyncModal?: () => void;
   onTriggerInstantSync?: () => void;
   isSyncing?: boolean;
-  lastSyncTime?: Date | null;
+  lastSyncTime?: Date | string | null;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -301,6 +306,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       const percentOfTotal = Math.round((count / totalItems) * 100);
       const totalEstimatedHours = items.reduce((sum, i) => sum + (Number(i.estimatedHours) || 0), 0);
       const totalPlannedBudget = items.reduce((sum, i) => sum + (Number(i.plannedBudget) || 0), 0);
+      const totalBlockedSeconds = items.reduce((sum, i) => sum + getTotalBlockedSeconds(i), 0);
       const earnedValueContribution = items.reduce((sum, i) => {
         const itemProg = i.progressPercent !== undefined ? i.progressPercent : cfg.progressPercent;
         return sum + ((Number(i.plannedBudget) || 0) * itemProg) / 100;
@@ -311,10 +317,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         percentOfTotal,
         totalEstimatedHours,
         totalPlannedBudget,
+        totalBlockedSeconds,
         earnedValueContribution,
       };
     });
   }, [scopedWbsItems, statusConfigs]);
+
+  // Work items marked as blocked or with blocked duration history
+  const currentlyBlockedItems = useMemo(() => {
+    return scopedWbsItems.filter((item) => item.status === "Blocked");
+  }, [scopedWbsItems]);
+
+  const allBlockedWbsItems = useMemo(() => {
+    return scopedWbsItems.filter(
+      (item) => item.status === "Blocked" || getTotalBlockedSeconds(item) > 0
+    );
+  }, [scopedWbsItems]);
+
+  const totalCumulativeBlockedSeconds = useMemo(() => {
+    return scopedWbsItems.reduce((sum, i) => sum + getTotalBlockedSeconds(i), 0);
+  }, [scopedWbsItems]);
 
   const totalWbsEffortHours = useMemo(() => {
     return scopedWbsItems.reduce((sum, i) => sum + (Number(i.estimatedHours) || 0), 0);
@@ -382,11 +404,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             type="button"
             id="dashboard-header-sync-btn"
             onClick={onTriggerInstantSync || onOpenSyncModal}
-            className="text-xs font-mono font-medium text-sky-300 hover:text-white px-3 py-1.5 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs"
+            className="text-xs font-mono font-medium text-sky-300 hover:text-white px-3 py-1.5 rounded-lg bg-[#141C2E] hover:bg-[#1E293B] border border-sky-500/30 hover:border-sky-500/60 transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 shadow-xs min-w-[115px] select-none whitespace-nowrap"
             title="Synchronize projects across all devices"
           >
-            <Cloud className={`w-3.5 h-3.5 text-sky-400 ${isSyncing ? "animate-spin" : ""}`} />
-            <span>{isSyncing ? "Syncing..." : "Sync Devices"}</span>
+            <Cloud className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+            <span>Sync Devices</span>
           </button>
           <button
             onClick={() => onNavigateTab("wbs")}
@@ -1369,15 +1391,162 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     <span>Effort:</span>
                     <span className="text-slate-200 font-semibold">{stat.totalEstimatedHours}h</span>
                   </div>
-                  <div className="flex justify-between text-slate-400">
-                    <span>Value:</span>
-                    <span className="text-emerald-400 font-semibold">${(stat.earnedValueContribution / 1000).toFixed(1)}k</span>
-                  </div>
+                  {stat.key === "Blocked" ? (
+                    <div className="flex justify-between text-rose-300 font-bold">
+                      <span>Time:</span>
+                      <span className="truncate max-w-[90px]">{formatDurationSeconds(stat.totalBlockedSeconds)}</span>
+                    </div>
+                  ) : (
+                    <div className="flex justify-between text-slate-400">
+                      <span>Value:</span>
+                      <span className="text-emerald-400 font-semibold">${(stat.earnedValueContribution / 1000).toFixed(1)}k</span>
+                    </div>
+                  )}
                 </div>
               </div>
             );
           })}
         </div>
+      </div>
+
+      {/* Blocked Work Items & Impediment Duration Hub */}
+      <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 sm:p-5 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#1E293B]">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="p-1.5 rounded-md bg-rose-500/10 text-rose-400 border border-rose-500/20 shrink-0">
+                <AlertTriangle className="w-4 h-4 text-rose-400" />
+              </div>
+              <h3 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider font-mono">
+                Blocked Work Items & Impediment Duration Tracker
+              </h3>
+              <span
+                className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border shrink-0 ${
+                  currentlyBlockedItems.length > 0
+                    ? "bg-rose-500/20 text-rose-300 border-rose-500/40 animate-pulse"
+                    : "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                }`}
+              >
+                {currentlyBlockedItems.length > 0
+                  ? `${currentlyBlockedItems.length} Blocked Item${currentlyBlockedItems.length > 1 ? "s" : ""}`
+                  : "Zero Active Impediments"}
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mt-1 font-sans">
+              Live calculated tracking of work items on hold or blocked. Timers are paused while blocked and all states of time spent blocked are calculated to protect schedule pacing and EVM cost roll-ups.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="px-3 py-1.5 rounded-lg bg-[#060911] border border-rose-900/40 text-right">
+              <span className="text-[10px] text-slate-400 uppercase font-mono block">Total Cumulative Blocked Time</span>
+              <span className="text-sm font-bold font-mono text-rose-300">
+                {formatDurationSeconds(totalCumulativeBlockedSeconds)}
+              </span>
+            </div>
+            <button
+              onClick={() => {
+                setWbsFilter("Blocked");
+                onNavigateTab("wbs");
+              }}
+              className="text-xs bg-[#141C2E] hover:bg-slate-800 text-sky-400 hover:text-white border border-slate-700 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer font-mono shrink-0"
+            >
+              <span>Manage in WBS</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {currentlyBlockedItems.length === 0 ? (
+          <div className="bg-[#060911] border border-emerald-900/30 rounded-lg p-4 flex items-center justify-between gap-3 text-xs font-mono">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <CheckCircle2 className="w-4 h-4" />
+              </div>
+              <div>
+                <span className="text-white font-semibold block">All Work Items Flowing Cleanly</span>
+                <span className="text-slate-400 text-[11px]">
+                  No deliverables are currently marked as Blocked. Total historical impediment time resolved: {formatDurationSeconds(totalCumulativeBlockedSeconds)}.
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={() => onNavigateTab("wbs")}
+              className="text-[11px] text-sky-400 hover:text-sky-300 underline cursor-pointer shrink-0"
+            >
+              View WBS Board
+            </button>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-separate border-spacing-y-1.5 min-w-[700px]">
+              <thead>
+                <tr className="text-slate-400 text-[10px] uppercase font-mono">
+                  <th className="pb-1 pl-3">WBS Code</th>
+                  <th className="pb-1">Deliverable / Task</th>
+                  <th className="pb-1">Assigned Stakeholder</th>
+                  <th className="pb-1">Time Spent Blocked</th>
+                  <th className="pb-1">Blocked Started</th>
+                  <th className="pb-1">Impediment / Reason</th>
+                  <th className="pb-1 pr-3 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {currentlyBlockedItems.map((item) => {
+                  const blockedSec = getTotalBlockedSeconds(item);
+                  const st = stakeholders.find((s) => s.id === item.assignedStakeholderId);
+                  const hourlyRate = (st as any)?.hourlyRate ?? (st as any)?.costPerHour ?? 75;
+
+                  return (
+                    <tr
+                      key={item.id}
+                      className="bg-[#060911] rounded-lg hover:bg-[#0E1526] transition-colors border border-rose-900/30"
+                    >
+                      <td className="py-2.5 pl-3 font-mono text-rose-400 font-bold">
+                        {item.wbsCode}
+                      </td>
+                      <td className="py-2.5 font-medium text-white max-w-xs truncate">
+                        <span>{item.title}</span>
+                        <span className="ml-2 text-[10px] text-slate-400 font-mono uppercase">
+                          {item.type}
+                        </span>
+                      </td>
+                      <td className="py-2.5 text-slate-300">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-medium">{getStakeholderName(item.assignedStakeholderId)}</span>
+                          <span className="text-[10px] font-mono text-slate-500">(${hourlyRate}/h)</span>
+                        </div>
+                      </td>
+                      <td className="py-2.5 font-mono">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse">
+                          <Clock className="w-3 h-3 text-rose-400" />
+                          <span>{formatDurationSeconds(blockedSec)}</span>
+                        </span>
+                      </td>
+                      <td className="py-2.5 font-mono text-[11px] text-slate-400">
+                        {item.blockedStartedAt ? new Date(item.blockedStartedAt).toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "Active session"}
+                      </td>
+                      <td className="py-2.5 text-slate-300 text-[11px] max-w-sm truncate">
+                        <span className="text-amber-300 font-mono">
+                          {item.blockedReason || "Impediment logged • Waiting on resolution"}
+                        </span>
+                      </td>
+                      <td className="py-2.5 pr-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => onNavigateTab("wbs")}
+                          className="px-2 py-1 rounded bg-rose-950/60 hover:bg-rose-900 text-rose-200 border border-rose-700/50 text-[10px] font-mono font-medium transition-colors cursor-pointer"
+                        >
+                          Resolve in WBS
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Bottom Operational Section: WBS Tracker & RAID Intelligence */}
@@ -1519,14 +1688,34 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           <td className="py-2.5">
                             {(() => {
                               const statusCfg = getStatusConfig(item.status, statusConfigs);
+                              const blockedSec = getTotalBlockedSeconds(item);
                               return (
-                                <span
-                                  className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-medium border inline-flex items-center gap-1.5 ${statusCfg.badgeBg} ${statusCfg.badgeText} ${statusCfg.badgeBorder}`}
-                                >
-                                  <span className={`w-1.5 h-1.5 rounded-full ${statusCfg.dotColor}`} />
-                                  <span>{statusCfg.label}</span>
-                                  <span className="opacity-80">({statusCfg.progressPercent}%)</span>
-                                </span>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span
+                                    className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-medium border inline-flex items-center gap-1.5 ${statusCfg.badgeBg} ${statusCfg.badgeText} ${statusCfg.badgeBorder}`}
+                                  >
+                                    <span className={`w-1.5 h-1.5 rounded-full ${statusCfg.dotColor}`} />
+                                    <span>{statusCfg.label}</span>
+                                    <span className="opacity-80">({statusCfg.progressPercent}%)</span>
+                                  </span>
+
+                                  {item.status === "Blocked" && (
+                                    <span
+                                      className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse"
+                                      title={`Blocked duration: ${formatDurationSeconds(blockedSec)}`}
+                                    >
+                                      ⏱ {formatDurationSeconds(blockedSec)}
+                                    </span>
+                                  )}
+                                  {item.status !== "Blocked" && blockedSec > 0 && (
+                                    <span
+                                      className="px-1.5 py-0.5 rounded text-[9px] font-mono text-slate-400 bg-slate-800/60 border border-slate-700/50"
+                                      title={`Previously spent blocked: ${formatDurationSeconds(blockedSec)}`}
+                                    >
+                                      {formatDurationSeconds(blockedSec)} blocked
+                                    </span>
+                                  )}
+                                </div>
                               );
                             })()}
                           </td>

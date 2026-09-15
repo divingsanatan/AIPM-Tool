@@ -215,11 +215,29 @@ export async function syncBidirectional(
   const localSprintIds = new Set((local.sprints || []).map((s) => s.id));
   const remoteHasNewSprints = (remote.sprints || []).some((s) => !localSprintIds.has(s.id));
 
-  const hasChanges = localHasNewProjects || localHasNewSprints || remoteHasNewProjects || remoteHasNewSprints;
+  const localRaidIds = new Set((local.raidItems || []).map((r) => r.id));
+  const remoteHasNewRaid = (remote.raidItems || []).some((r) => !localRaidIds.has(r.id));
+  const remoteRaidIds = new Set((remote.raidItems || []).map((r) => r.id));
+  const localHasNewRaid = (local.raidItems || []).some((r) => !remoteRaidIds.has(r.id));
+
+  const hasChanges =
+    localHasNewProjects ||
+    localHasNewSprints ||
+    remoteHasNewProjects ||
+    remoteHasNewSprints ||
+    localHasNewRaid ||
+    remoteHasNewRaid;
 
   let serverUpdated = false;
   // If local had items not yet on the server, or forcePush, persist merged state to server
-  if (forcePush || localHasNewProjects || localHasNewSprints || !remote.projects || remote.projects.length === 0) {
+  if (
+    forcePush ||
+    localHasNewProjects ||
+    localHasNewSprints ||
+    localHasNewRaid ||
+    !remote.projects ||
+    remote.projects.length === 0
+  ) {
     await pushServerState(merged);
     serverUpdated = true;
   }

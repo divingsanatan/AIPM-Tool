@@ -18,29 +18,37 @@ import {
   Info,
   Sliders,
   Check,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 
 interface StatusManagerModalProps {
   isOpen: boolean;
   onClose: () => void;
   statusConfigs: StatusConfig[];
-  onUpdateStatusConfigs: (newConfigs: StatusConfig[]) => void;
+  onUpdateStatusConfigs?: (newConfigs: StatusConfig[]) => void;
+  onUpdateConfigs?: (newConfigs: StatusConfig[]) => void;
   wbsItems: WbsItem[];
   onSyncAllTasks: () => void;
   onApplyStatusProgressToTasks: (statusKey: string, newProgress: number) => void;
   initialFocusedStatus?: string;
+  initialSelectedStatusKey?: string;
 }
 
 export const StatusManagerModal: React.FC<StatusManagerModalProps> = ({
   isOpen,
   onClose,
   statusConfigs,
-  onUpdateStatusConfigs,
+  onUpdateStatusConfigs: propUpdateStatusConfigs,
+  onUpdateConfigs,
   wbsItems,
   onSyncAllTasks,
   onApplyStatusProgressToTasks,
   initialFocusedStatus,
+  initialSelectedStatusKey,
 }) => {
+  const onUpdateStatusConfigs = propUpdateStatusConfigs || onUpdateConfigs || (() => {});
+  const effectiveFocusedStatus = initialFocusedStatus || initialSelectedStatusKey;
   const [newStatusName, setNewStatusName] = useState("");
   const [newStatusProgress, setNewStatusProgress] = useState<number>(70);
   const [newStatusColor, setNewStatusColor] = useState("purple");
@@ -125,12 +133,32 @@ export const StatusManagerModal: React.FC<StatusManagerModalProps> = ({
   const handleResetToDefaults = () => {
     if (
       window.confirm(
-        "Reset workflow statuses to the default rules (Done: 100%, Demo Ready: 60%, Blocked: 50%, In Progress: 40%, To Do: 0%, Backlog: 0%)?"
+        "Reset workflow statuses to the default workflow rules (To Do: 0%, In Progress: 40%, Blocked: 50%, Demo Ready: 60%, Done: 100%, Backlog: 0%)?"
       )
     ) {
       onUpdateStatusConfigs([...DEFAULT_STATUS_CONFIGS]);
       triggerToast("Reset statuses to default mapping.");
     }
+  };
+
+  const handleMoveStatus = (index: number, direction: "up" | "down") => {
+    if (!onUpdateStatusConfigs) return;
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= statusConfigs.length) return;
+
+    const copy = [...statusConfigs];
+    const temp = copy[index];
+    copy[index] = copy[targetIndex];
+    copy[targetIndex] = temp;
+
+    // Recalculate order values
+    const reordered = copy.map((item, idx) => ({
+      ...item,
+      order: idx + 1,
+    }));
+
+    onUpdateStatusConfigs(reordered);
+    triggerToast(`Moved "${temp.label}" ${direction}.`);
   };
 
   return (
@@ -208,9 +236,9 @@ export const StatusManagerModal: React.FC<StatusManagerModalProps> = ({
 
             {/* Status List */}
             <div className="space-y-2.5">
-              {statusConfigs.map((status) => {
+              {statusConfigs.map((status, idx) => {
                 const count = wbsItems.filter((i) => i.status === status.key).length;
-                const isFocused = initialFocusedStatus === status.key;
+                const isFocused = effectiveFocusedStatus === status.key;
 
                 return (
                   <div
@@ -221,10 +249,31 @@ export const StatusManagerModal: React.FC<StatusManagerModalProps> = ({
                         : "bg-[#090D16] border-[#1E293B]"
                     } flex flex-col sm:flex-row sm:items-center justify-between gap-3`}
                   >
-                    {/* Status Info */}
-                    <div className="flex items-center gap-3 min-w-44">
+                    {/* Status Info with Reorder Controls */}
+                    <div className="flex items-center gap-2.5 min-w-44">
+                      <div className="flex flex-col gap-0.5 shrink-0">
+                        <button
+                          type="button"
+                          disabled={idx === 0}
+                          onClick={() => handleMoveStatus(idx, "up")}
+                          className="p-0.5 rounded text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-20 disabled:hover:text-slate-400 transition-colors cursor-pointer disabled:cursor-not-allowed"
+                          title="Move status up in workflow sequence"
+                        >
+                          <ChevronUp className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={idx === statusConfigs.length - 1}
+                          onClick={() => handleMoveStatus(idx, "down")}
+                          className="p-0.5 rounded text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-20 disabled:hover:text-slate-400 transition-colors cursor-pointer disabled:cursor-not-allowed"
+                          title="Move status down in workflow sequence"
+                        >
+                          <ChevronDown className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+
                       <span
-                        className={`inline-block w-2.5 h-2.5 rounded-full ${status.dotColor}`}
+                        className={`inline-block w-2.5 h-2.5 rounded-full shrink-0 ${status.dotColor}`}
                       />
                       <div>
                         <div className="flex items-center gap-2">
@@ -238,6 +287,9 @@ export const StatusManagerModal: React.FC<StatusManagerModalProps> = ({
                               Custom
                             </span>
                           )}
+                          <span className="text-[10px] font-mono text-slate-500">
+                            #{idx + 1}
+                          </span>
                         </div>
                         <p className="text-[11px] text-slate-400 mt-1">
                           <span className="font-mono text-white font-semibold">{count}</span>{" "}

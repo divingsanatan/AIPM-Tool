@@ -1,4 +1,5 @@
 import { WbsItem, WbsType, WorkItemStatus, PriorityLevel, Stakeholder } from "../types";
+import { getStakeholderHourlyRate, getTotalBlockedSeconds } from "./wbsTimerUtils";
 
 /**
  * Resolves the parent ID of a WBS item by explicit parentId or by WBS code dot-hierarchy.
@@ -165,20 +166,20 @@ export function calculateWbsHierarchyRollups(
 
     // If it is a leaf item (lowest work item), direct entry is respected
     if (!childIds || childIds.length === 0) {
-      let leafActualCost = Number(raw.actualCost) || 0;
-      const leafActualHours = Number(raw.actualHours) || 0;
-      if (leafActualCost === 0 && leafActualHours > 0 && raw.assignedStakeholderId && stakeholders) {
-        const s = stakeholders.find((st) => st.id === raw.assignedStakeholderId);
-        if (s && s.hourlyRate > 0) {
-          leafActualCost = Math.round(leafActualHours * s.hourlyRate);
-        }
-      }
+      const hourlyRate = getStakeholderHourlyRate(raw, stakeholders);
       const leafEstimatedHours = Number(raw.estimatedHours) || 0;
-      const leafPlannedBudget = Number(raw.plannedBudget) || 0;
+      // Estimated cost is the product of stakeholder hourly rate and estimated hours
+      const leafPlannedBudget = Math.round(leafEstimatedHours * hourlyRate);
+
+      const leafActualHours = Number(raw.actualHours) || 0;
+      // Actual cost is the product of stakeholder hourly rate and actual hours
+      const leafActualCost = Math.round(leafActualHours * hourlyRate);
+
       const leafProgressPercent = Math.min(100, Math.max(0, Number(raw.progressPercent) || 0));
       const leafEarnedValue = Math.round(leafPlannedBudget * (leafProgressPercent / 100));
       const leafCostVariance = leafEarnedValue - leafActualCost;
       const leafRemainingHours = Math.max(0, Math.round((leafEstimatedHours - leafActualHours) * 10) / 10);
+      const leafBlockedSeconds = getTotalBlockedSeconds(raw);
 
       const initialContributors = Array.from(
         new Set([
@@ -200,6 +201,7 @@ export function calculateWbsHierarchyRollups(
         earnedValue: leafEarnedValue,
         costVariance: leafCostVariance,
         remainingHours: leafRemainingHours,
+        totalBlockedDurationSeconds: leafBlockedSeconds,
         contributorStakeholderIds: initialContributors,
         isRolledUp: false,
         childCount: 0,
@@ -236,6 +238,10 @@ export function calculateWbsHierarchyRollups(
     );
     const rolledActualCost = resolvedChildren.reduce(
       (sum, c) => sum + (Number(c.actualCost) || 0),
+      0
+    );
+    const rolledBlockedSeconds = resolvedChildren.reduce(
+      (sum, c) => sum + (Number(c.totalBlockedDurationSeconds) || 0),
       0
     );
 
@@ -366,6 +372,7 @@ export function calculateWbsHierarchyRollups(
       earnedValue: rolledEarnedValue,
       costVariance: rolledCostVariance,
       remainingHours: rolledRemainingHours,
+      totalBlockedDurationSeconds: rolledBlockedSeconds,
       isRolledUp: true,
       childCount: resolvedChildren.length,
     };
