@@ -844,6 +844,10 @@ export default function App() {
     showToast(`Imported ${newItems.length} work items into WBS.`);
   };
 
+  const handleReorderWbsItems = (newItems: WbsItem[]) => {
+    setWbsItems(calculateWbsHierarchyRollups(newItems, stakeholders).rolledUpItems);
+  };
+
   // Status & Progress Rules Handlers
   const handleUpdateStatusConfigs = (newConfigs: StatusConfig[]) => {
     setStatusConfigs(newConfigs);
@@ -1276,6 +1280,7 @@ export default function App() {
               documents={filteredDocuments}
               onAddWbsItem={handleAddWbsItem}
               onUpdateWbsItem={handleUpdateWbsItem}
+              onReorderWbsItems={handleReorderWbsItems}
               onDeleteWbsItem={handleDeleteWbsItem}
               onBatchAddWbsItems={handleBatchAddWbsItems}
               statusConfigs={statusConfigs}

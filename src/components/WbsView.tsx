@@ -66,6 +66,7 @@ interface WbsViewProps {
   documents: ProjectDocument[];
   onAddWbsItem: (item: WbsItem) => void;
   onUpdateWbsItem: (item: WbsItem) => void;
+  onReorderWbsItems?: (items: WbsItem[]) => void;
   onDeleteWbsItem: (id: string) => void;
   onBatchAddWbsItems: (items: WbsItem[]) => void;
   globalFilter?: GlobalFilterState;
@@ -93,6 +94,7 @@ export const WbsView: React.FC<WbsViewProps> = ({
   documents,
   onAddWbsItem,
   onUpdateWbsItem,
+  onReorderWbsItems,
   onDeleteWbsItem,
   onBatchAddWbsItems,
   globalFilter,
@@ -557,6 +559,7 @@ export const WbsView: React.FC<WbsViewProps> = ({
         stakeholders={stakeholders}
         onAddWbsItem={onAddWbsItem}
         onUpdateWbsItem={onUpdateWbsItem}
+        onReorderWbsItems={onReorderWbsItems}
         onDeleteWbsItem={onDeleteWbsItem}
         statusConfigs={statusConfigs}
         onUpdateStatusConfigs={onUpdateStatusConfigs}

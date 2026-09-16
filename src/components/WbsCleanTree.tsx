@@ -70,6 +70,7 @@ interface WbsCleanTreeProps {
   stakeholders: Stakeholder[];
   onAddWbsItem: (item: WbsItem) => void;
   onUpdateWbsItem: (item: WbsItem) => void;
+  onReorderWbsItems?: (newItems: WbsItem[]) => void;
   onDeleteWbsItem: (id: string) => void;
   onOpenAddModal: (parentId?: string | null, statusPreset?: WorkItemStatus, parentItem?: WbsItem) => void;
   onOpenEditModal: (item: WbsItem) => void;
@@ -92,6 +93,7 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
   stakeholders,
   onAddWbsItem,
   onUpdateWbsItem,
+  onReorderWbsItems,
   onDeleteWbsItem,
   onOpenAddModal,
   onOpenEditModal,
@@ -138,6 +140,90 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
   const [quickAssignFilter, setQuickAssignFilter] = useState<"all" | "unassigned">("all");
   const [selectedLevelFilter, setSelectedLevelFilter] = useState<WbsType | "ALL">("ALL");
   const [includeBacklogInBoard, setIncludeBacklogInBoard] = useState<boolean>(false);
+
+  // Drag and Drop state for Board view
+  const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
+  const [dragOverColumnKey, setDragOverColumnKey] = useState<string | null>(null);
+  const [dragOverItemId, setDragOverItemId] = useState<string | null>(null);
+  const [dropPosition, setDropPosition] = useState<"before" | "after" | null>(null);
+
+  const draggedItem = useMemo(
+    () => (draggedItemId ? wbsItems.find((i) => i.id === draggedItemId) : null),
+    [draggedItemId, wbsItems]
+  );
+
+  const handleDropTaskOnColumn = (targetColumnKey: string, itemId: string) => {
+    setDraggedItemId(null);
+    setDragOverColumnKey(null);
+    setDragOverItemId(null);
+    setDropPosition(null);
+
+    const item = wbsItems.find((i) => i.id === itemId);
+    if (!item) return;
+
+    const currentList = statusConfigs && statusConfigs.length > 0 ? statusConfigs : DEFAULT_STATUS_CONFIGS;
+    const targetCfg = currentList.find(
+      (c) => c.key.toLowerCase() === targetColumnKey.toLowerCase()
+    );
+    const nextStatus = targetCfg ? targetCfg.key : targetColumnKey;
+
+    if (item.status.toLowerCase() === nextStatus.toLowerCase()) {
+      return;
+    }
+
+    const updated = transitionWorkItemStatus(item, nextStatus, stakeholders, currentList);
+    if (onReorderWbsItems) {
+      const remaining = wbsItems.filter((i) => i.id !== item.id);
+      onReorderWbsItems([...remaining, updated]);
+    } else {
+      onUpdateWbsItem(updated);
+    }
+  };
+
+  const handleDropTaskOnItem = (
+    targetColumnKey: string,
+    targetItemId: string,
+    position: "before" | "after"
+  ) => {
+    const currentDraggedId = draggedItemId;
+    setDraggedItemId(null);
+    setDragOverColumnKey(null);
+    setDragOverItemId(null);
+    setDropPosition(null);
+
+    if (!currentDraggedId || currentDraggedId === targetItemId) return;
+
+    const item = wbsItems.find((i) => i.id === currentDraggedId);
+    const targetItem = wbsItems.find((i) => i.id === targetItemId);
+    if (!item || !targetItem) return;
+
+    const currentList = statusConfigs && statusConfigs.length > 0 ? statusConfigs : DEFAULT_STATUS_CONFIGS;
+    const targetCfg = currentList.find(
+      (c) => c.key.toLowerCase() === targetColumnKey.toLowerCase()
+    );
+    const nextStatus = targetCfg ? targetCfg.key : targetColumnKey;
+
+    const updated =
+      item.status.toLowerCase() !== nextStatus.toLowerCase()
+        ? transitionWorkItemStatus(item, nextStatus, stakeholders, currentList)
+        : item;
+
+    if (onReorderWbsItems) {
+      const listWithoutDragged = wbsItems.filter((i) => i.id !== item.id);
+      const targetIdx = listWithoutDragged.findIndex((i) => i.id === targetItemId);
+      if (targetIdx !== -1) {
+        const insertIdx = position === "before" ? targetIdx : targetIdx + 1;
+        const newList = [...listWithoutDragged];
+        newList.splice(insertIdx, 0, updated);
+        onReorderWbsItems(newList);
+        return;
+      }
+    }
+
+    if (updated !== item) {
+      onUpdateWbsItem(updated);
+    }
+  };
 
   const handleShiftColumn = (colKey: string, direction: "left" | "right") => {
     if (!onUpdateStatusConfigs) return;
@@ -1703,6 +1789,20 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
             </div>
 
             <div className="flex items-center gap-2">
+              {draggedItem ? (
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky-500/20 border border-sky-500/40 text-sky-200 text-xs font-medium animate-pulse">
+                  <GripVertical className="h-3.5 w-3.5 text-sky-400" />
+                  <span>Dragging:</span>
+                  <span className="font-bold text-white max-w-[130px] truncate">{draggedItem.title}</span>
+                  <span className="text-slate-400 text-[10px] font-mono">({draggedItem.wbsCode})</span>
+                </div>
+              ) : (
+                <div className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#141C2E] border border-[#1E293B] text-slate-400 text-[11px]">
+                  <GripVertical className="h-3.5 w-3.5 text-sky-400" />
+                  <span>Drag cards between columns to change status</span>
+                </div>
+              )}
+
               <button
                 type="button"
                 onClick={() => setIncludeBacklogInBoard(!includeBacklogInBoard)}
@@ -1740,7 +1840,40 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
               {boardColumns.map((col, colIdx) => (
                 <div
                   key={col.key}
-                  className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-3 flex flex-col h-[520px] w-72 shrink-0"
+                  onDragOver={(e) => {
+                    if (!draggedItemId) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                    if (dragOverColumnKey !== col.key) {
+                      setDragOverColumnKey(col.key);
+                    }
+                  }}
+                  onDragEnter={(e) => {
+                    if (!draggedItemId) return;
+                    e.preventDefault();
+                    setDragOverColumnKey(col.key);
+                  }}
+                  onDragLeave={(e) => {
+                    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+                    if (dragOverColumnKey === col.key) {
+                      setDragOverColumnKey(null);
+                    }
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const droppedId =
+                      e.dataTransfer.getData("application/wbs-item-id") ||
+                      e.dataTransfer.getData("text/plain") ||
+                      draggedItemId;
+                    if (droppedId) {
+                      handleDropTaskOnColumn(col.key, droppedId);
+                    }
+                  }}
+                  className={`border rounded-xl p-3 flex flex-col h-[520px] w-72 shrink-0 transition-all duration-150 ${
+                    dragOverColumnKey === col.key && draggedItem && draggedItem.status.toLowerCase() !== col.key.toLowerCase()
+                      ? "bg-[#091325] border-sky-500 ring-2 ring-sky-500/40 shadow-xl shadow-sky-500/10"
+                      : "bg-[#0B0F19] border-[#1E293B]"
+                  }`}
                 >
                   <div className="flex items-center justify-between pb-2.5 mb-2 border-b border-[#1E293B]">
                     <div className="flex items-center gap-1.5">
@@ -1782,50 +1915,154 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
                     </div>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
-                    {col.items.map((item) => {
-                      const nom = getCompactNomenclature(item.type);
-                      const itemAssignees = getItemAssignees(item, stakeholders);
-                      return (
-                        <div
-                          key={item.id}
-                          onClick={() => onOpenEditModal(item)}
-                          className="p-3 rounded-lg bg-[#060911] border border-[#1E293B] hover:border-sky-500/50 transition-all cursor-pointer shadow-xs space-y-2"
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex items-center gap-1.5">
-                              <span className={`inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-mono font-bold border ${nom.bgColor} ${nom.color} ${nom.borderColor}`}>
-                                <span className="text-[10px] leading-none">{nom.symbol}</span>
-                                <span>{nom.short}</span>
-                              </span>
-                              <span className="font-mono text-[10px] text-sky-400">{item.wbsCode}</span>
-                            </div>
-                            {renderPriorityFlag(item)}
-                          </div>
-                          <h5 className="text-xs font-semibold text-white line-clamp-2">{item.title}</h5>
-
-                          <div className="flex items-center justify-between pt-1 text-[11px] text-slate-400 border-t border-[#1E293B]/40">
-                            <span className="text-[#F87171] font-mono">{formatShortDate(item.dueDate)}</span>
-                            {itemAssignees.length > 0 ? (
-                              <div className="flex items-center gap-1">
-                                <div className="flex -space-x-1">
-                                  {itemAssignees.slice(0, 2).map((s) => (
-                                    <span key={s.id} className="h-3.5 w-3.5 rounded-full bg-sky-500/30 text-[8px] flex items-center justify-center text-sky-300 font-bold">
-                                      {s.name.charAt(0)}
-                                    </span>
-                                  ))}
-                                </div>
-                                <span className="truncate max-w-[80px] text-slate-300 text-[10px]">
-                                  {itemAssignees.length === 1 ? itemAssignees[0].name : `${itemAssignees.length} assigned`}
-                                </span>
-                              </div>
-                            ) : (
-                              <span className="text-slate-600 italic text-[10px]">Unassigned</span>
-                            )}
-                          </div>
+                  <div
+                    onDragOver={(e) => {
+                      if (!draggedItemId) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                      if (dragOverColumnKey !== col.key) {
+                        setDragOverColumnKey(col.key);
+                      }
+                    }}
+                    className="flex-1 overflow-y-auto space-y-2 pr-1"
+                  >
+                    {col.items.length === 0 ? (
+                      <div
+                        className={`h-40 rounded-lg border-2 border-dashed flex flex-col items-center justify-center p-3 text-center transition-all ${
+                          dragOverColumnKey === col.key && draggedItemId
+                            ? "border-sky-400 bg-sky-500/15 text-sky-200"
+                            : "border-[#1E293B] text-slate-500 bg-[#060911]/40"
+                        }`}
+                      >
+                        <div className="h-8 w-8 rounded-full bg-slate-800/80 flex items-center justify-center mb-1.5">
+                          <CornerDownRight className="h-4 w-4 text-slate-400" />
                         </div>
-                      );
-                    })}
+                        <p className="text-xs font-semibold text-slate-300">No tasks in this stage</p>
+                        <p className="text-[10px] text-slate-500 mt-0.5">
+                          {draggedItemId ? `Drop card here to move to ${col.label}` : "Drag & drop cards here"}
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        {col.items.map((item) => {
+                          const nom = getCompactNomenclature(item.type);
+                          const itemAssignees = getItemAssignees(item, stakeholders);
+                          return (
+                            <React.Fragment key={item.id}>
+                              {dragOverItemId === item.id && dropPosition === "before" && draggedItemId !== item.id && (
+                                <div className="h-1 bg-gradient-to-r from-sky-400 via-indigo-400 to-sky-400 rounded-full my-1 shadow-md shadow-sky-500/50 flex items-center justify-between animate-pulse">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-sky-400 -ml-0.5" />
+                                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 -mr-0.5" />
+                                </div>
+                              )}
+
+                              <div
+                                draggable={true}
+                                onDragStart={(e) => {
+                                  e.dataTransfer.setData("text/plain", item.id);
+                                  e.dataTransfer.setData("application/wbs-item-id", item.id);
+                                  e.dataTransfer.effectAllowed = "move";
+                                  setDraggedItemId(item.id);
+                                }}
+                                onDragEnd={() => {
+                                  setDraggedItemId(null);
+                                  setDragOverColumnKey(null);
+                                  setDragOverItemId(null);
+                                  setDropPosition(null);
+                                }}
+                                onDragOver={(e) => {
+                                  if (!draggedItemId || draggedItemId === item.id) return;
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  e.dataTransfer.dropEffect = "move";
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  const midY = rect.top + rect.height / 2;
+                                  const pos = e.clientY < midY ? "before" : "after";
+                                  if (dragOverItemId !== item.id || dropPosition !== pos) {
+                                    setDragOverItemId(item.id);
+                                    setDropPosition(pos);
+                                  }
+                                  if (dragOverColumnKey !== col.key) {
+                                    setDragOverColumnKey(col.key);
+                                  }
+                                }}
+                                onDragLeave={(e) => {
+                                  if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+                                  if (dragOverItemId === item.id) {
+                                    setDragOverItemId(null);
+                                    setDropPosition(null);
+                                  }
+                                }}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  const pos = dropPosition || "after";
+                                  handleDropTaskOnItem(col.key, item.id, pos);
+                                }}
+                                onClick={() => onOpenEditModal(item)}
+                                className={`group p-3 rounded-lg bg-[#060911] border transition-all cursor-pointer shadow-xs space-y-2 select-none relative ${
+                                  draggedItemId === item.id
+                                    ? "opacity-30 border-dashed border-sky-400 bg-sky-950/40 scale-[0.98]"
+                                    : "border-[#1E293B] hover:border-sky-500/60 hover:bg-[#080D19]"
+                                }`}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="flex items-center gap-1.5">
+                                    <span
+                                      className="text-slate-500 group-hover:text-slate-300 cursor-grab active:cursor-grabbing p-0.5 -ml-1 rounded hover:bg-slate-800 transition-colors"
+                                      title="Drag to move between stages or reorder"
+                                    >
+                                      <GripVertical className="h-3.5 w-3.5" />
+                                    </span>
+                                    <span className={`inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-mono font-bold border ${nom.bgColor} ${nom.color} ${nom.borderColor}`}>
+                                      <span className="text-[10px] leading-none">{nom.symbol}</span>
+                                      <span>{nom.short}</span>
+                                    </span>
+                                    <span className="font-mono text-[10px] text-sky-400">{item.wbsCode}</span>
+                                  </div>
+                                  {renderPriorityFlag(item)}
+                                </div>
+                                <h5 className="text-xs font-semibold text-white line-clamp-2">{item.title}</h5>
+
+                                <div className="flex items-center justify-between pt-1 text-[11px] text-slate-400 border-t border-[#1E293B]/40">
+                                  <span className="text-[#F87171] font-mono">{formatShortDate(item.dueDate)}</span>
+                                  {itemAssignees.length > 0 ? (
+                                    <div className="flex items-center gap-1">
+                                      <div className="flex -space-x-1">
+                                        {itemAssignees.slice(0, 2).map((s) => (
+                                          <span key={s.id} className="h-3.5 w-3.5 rounded-full bg-sky-500/30 text-[8px] flex items-center justify-center text-sky-300 font-bold">
+                                            {s.name.charAt(0)}
+                                          </span>
+                                        ))}
+                                      </div>
+                                      <span className="truncate max-w-[80px] text-slate-300 text-[10px]">
+                                        {itemAssignees.length === 1 ? itemAssignees[0].name : `${itemAssignees.length} assigned`}
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <span className="text-slate-600 italic text-[10px]">Unassigned</span>
+                                  )}
+                                </div>
+                              </div>
+
+                              {dragOverItemId === item.id && dropPosition === "after" && draggedItemId !== item.id && (
+                                <div className="h-1 bg-gradient-to-r from-sky-400 via-indigo-400 to-sky-400 rounded-full my-1 shadow-md shadow-sky-500/50 flex items-center justify-between animate-pulse">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-sky-400 -ml-0.5" />
+                                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 -mr-0.5" />
+                                </div>
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
+
+                        {dragOverColumnKey === col.key && !dragOverItemId && draggedItemId && draggedItem && draggedItem.status.toLowerCase() !== col.key.toLowerCase() && (
+                          <div className="py-2 px-3 rounded-lg border-2 border-dashed border-sky-400/80 bg-sky-500/15 text-sky-300 flex items-center justify-center gap-1.5 text-xs font-semibold animate-pulse">
+                            <Sparkles className="h-3.5 w-3.5 text-sky-400" />
+                            <span>Drop to move to {col.label} ({col.progressPercent}%)</span>
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
 
                   <button

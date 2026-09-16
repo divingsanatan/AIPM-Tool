@@ -12,6 +12,35 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+      // Suppress benign Vite HMR WebSocket connection warnings in AI Studio preview
+      (function () {
+        window.addEventListener('unhandledrejection', function (event) {
+          var msg = String((event && event.reason && (event.reason.message || event.reason)) || '');
+          if (msg.includes('WebSocket closed without opened') || msg.includes('WebSocket')) {
+            event.preventDefault();
+          }
+        });
+
+        window.addEventListener('error', function (event) {
+          var msg = String((event && event.message) || '');
+          if (msg.includes('WebSocket closed without opened') || msg.includes('[vite] failed to connect to websocket')) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+        }, true);
+
+        var originalConsoleError = console.error;
+        console.error = function () {
+          var args = Array.prototype.slice.call(arguments);
+          var text = args.map(function (a) { return String(a); }).join(' ');
+          if (text.includes('[vite] failed to connect to websocket') || text.includes('WebSocket closed without opened')) {
+            return;
+          }
+          originalConsoleError.apply(console, args);
+        };
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
