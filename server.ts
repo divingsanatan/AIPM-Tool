@@ -417,6 +417,59 @@ async function executeAiCall(options: AiCallOptions): Promise<{ text: string; mo
   throw new Error(`Unsupported AI Provider: ${provider}`);
 }
 
+async function executeAiCallWithFallback(options: AiCallOptions): Promise<{
+  text: string;
+  modelName: string;
+  fallbackUsed?: boolean;
+  fallbackReason?: string;
+}> {
+  const provider = options.aiConfig?.provider || "gemini";
+  const isBuiltinGemini =
+    options.aiConfig?.id === "builtin-gemini" ||
+    (provider === "gemini" && !options.aiConfig?.apiKey);
+
+  if (isBuiltinGemini) {
+    const res = await executeAiCall(options);
+    return res;
+  }
+
+  if (provider === "local_pmi") {
+    return { text: "LOCAL_PMI_ENGINE", modelName: "PMBOK 7th Ed. Deterministic Engine" };
+  }
+
+  // Attempt the user-selected external provider
+  try {
+    const res = await executeAiCall(options);
+    return res;
+  } catch (providerErr: any) {
+    const cleanReason = extractCleanErrorMessage(providerErr);
+    // If Built-in Gemini is available on server, automatically answer via Gemini
+    if (process.env.GEMINI_API_KEY) {
+      try {
+        console.log(`[AI Dispatcher] External provider (${options.aiConfig?.name || provider}) unavailable; engaging Built-in Gemini`);
+        const geminiRes = await executeAiCall({
+          ...options,
+          aiConfig: {
+            id: "builtin-gemini",
+            name: "Built-in Gemini (Server Default)",
+            provider: "gemini",
+            model: "gemini-3.8-flash",
+          },
+        });
+        return {
+          ...geminiRes,
+          fallbackUsed: true,
+          fallbackReason: cleanReason,
+        };
+      } catch (_geminiErr: any) {
+        // Both failed, proceed to throw
+        throw providerErr;
+      }
+    }
+    throw providerErr;
+  }
+}
+
 // Deterministic Local PMI Intelligence & EVM Analysis Engine
 function generateLocalPmiQueryResponse(
   query: string,
@@ -651,7 +704,7 @@ app.post("/api/ai/test-connection", async (req, res) => {
     });
   } catch (error: any) {
     const cleanMsg = extractCleanErrorMessage(error);
-    console.info("AI connection test response:", cleanMsg);
+    console.log("[AI Connection Test] Provider check completed with status:", cleanMsg.slice(0, 80));
     return res.status(200).json({
       success: false,
       error: cleanMsg || "Failed to establish connection to AI provider",
@@ -727,7 +780,7 @@ User Question / Command:
 "${query}"`;
 
     try {
-      const { text, modelName } = await executeAiCall({
+      const { text, modelName, fallbackUsed, fallbackReason } = await executeAiCallWithFallback({
         aiConfig,
         systemPrompt,
         userPrompt,
@@ -744,16 +797,20 @@ User Question / Command:
       const parsed = JSON.parse(cleanText);
       return res.json({
         ...parsed,
-        activeProvider: aiConfig?.name || modelName,
+        activeProvider: fallbackUsed ? "Built-in Gemini (Fallback)" : (aiConfig?.name || modelName),
         modelUsed: modelName,
+        fallbackUsed: !!fallbackUsed,
+        warning: fallbackUsed
+          ? `Notice: Provider "${aiConfig?.name || "Selected"}" was unavailable (${fallbackReason}). Answered using Built-in Gemini.`
+          : undefined,
       });
     } catch (aiErr: any) {
+      console.log("[AI Dispatcher] Engaging deterministic PMBOK rule engine");
       const cleanMessage = extractCleanErrorMessage(aiErr);
-      console.info("Engaging deterministic local PMI engine:", cleanMessage);
       const localResult = generateLocalPmiQueryResponse(query, projectContext, scope, documentContext);
       return res.json({
         ...localResult,
-        warning: `Notice: External model unavailable (${cleanMessage}). Switched to local PMBOK calculations.`,
+        warning: `Notice: Local calculations active (${cleanMessage.slice(0, 100)}).`,
         apiError: {
           provider: aiConfig?.provider || "gemini",
           model: aiConfig?.model || "gemini-3.8-flash",
@@ -764,12 +821,12 @@ User Question / Command:
       });
     }
   } catch (error: any) {
+    console.log("[AI Dispatcher] Service fallback engaged");
     const cleanMessage = extractCleanErrorMessage(error);
-    console.info("Service notice in /api/gemini/query:", cleanMessage);
     const localResult = generateLocalPmiQueryResponse(req.body.query, req.body.projectContext, req.body.scope, req.body.documentContext);
     return res.json({
       ...localResult,
-      warning: `Notice: Service offline (${cleanMessage}). Operating on local project indicators.`,
+      warning: `Notice: Local indicators active (${cleanMessage.slice(0, 100)}).`,
     });
   }
 });
@@ -823,7 +880,7 @@ Return ONLY a JSON array of items:
 `;
 
     try {
-      const { text } = await executeAiCall({
+      const { text } = await executeAiCallWithFallback({
         aiConfig,
         systemPrompt,
         userPrompt: `Document Title: ${documentTitle || "Project Specification"}\n\nDocument Content:\n${documentText}`,
@@ -840,7 +897,7 @@ Return ONLY a JSON array of items:
       const parsed = JSON.parse(cleanText);
       return res.json({ items: Array.isArray(parsed) ? parsed : parsed.items || [] });
     } catch (aiErr: any) {
-      console.info("Using structured deterministic WBS parser:", extractCleanErrorMessage(aiErr));
+      console.log("[AI Dispatcher] Using structured deterministic WBS parser fallback");
 
       // Deterministic parsing of lines / sections into structured WBS
       const lines = documentText.split("\n").map((l: string) => l.trim()).filter(Boolean);
@@ -915,7 +972,7 @@ Return ONLY a JSON array of items:
 
       return res.json({
         items,
-        warning: `Notice: AI API was unavailable (${aiErr.message}). Document was parsed using PMI structured rule engine.`,
+        warning: `Notice: Local rule engine used (${extractCleanErrorMessage(aiErr).slice(0, 80)}).`,
       });
     }
   } catch (error: any) {
@@ -946,7 +1003,7 @@ Include:
 Format as structured Markdown with clean tables and clear sections.`;
 
     try {
-      const { text } = await executeAiCall({
+      const { text } = await executeAiCallWithFallback({
         aiConfig,
         userPrompt: prompt,
         systemPrompt: "You are a Senior PMP Risk Director.",
@@ -954,7 +1011,7 @@ Format as structured Markdown with clean tables and clear sections.`;
 
       return res.json({ reportMarkdown: text });
     } catch (aiErr: any) {
-      console.info("Using deterministic PMI Risk report generator:", extractCleanErrorMessage(aiErr));
+      console.log("[AI Dispatcher] Using deterministic PMI Risk report generator fallback");
 
       const risks = Array.isArray(raidData) ? raidData.filter((r: any) => r.category === "Risk" || !r.category) : [];
       const issues = Array.isArray(raidData) ? raidData.filter((r: any) => r.category === "Issue") : [];
@@ -999,7 +1056,7 @@ ${riskRows || "| R-01 | Key Dependency Schedule Variance | P:3 x I:4 = **12** | 
 
       return res.json({
         reportMarkdown: deterministicReport,
-        warning: `Notice: AI API was unavailable (${aiErr.message}). Report was generated using local PMI risk analytics.`,
+        warning: `Notice: Local risk analytics active (${extractCleanErrorMessage(aiErr).slice(0, 80)}).`,
       });
     }
   } catch (error: any) {
@@ -1030,7 +1087,7 @@ Generate a complete, executive-ready PMI Status Report with:
 Format with pristine Markdown and clear structured tables.`;
 
     try {
-      const { text } = await executeAiCall({
+      const { text } = await executeAiCallWithFallback({
         aiConfig,
         userPrompt: prompt,
         systemPrompt: "You are a Lead PMP Project Director.",
@@ -1038,7 +1095,7 @@ Format with pristine Markdown and clear structured tables.`;
 
       return res.json({ reportMarkdown: text });
     } catch (aiErr: any) {
-      console.info("Using deterministic PMI Status report generator:", extractCleanErrorMessage(aiErr));
+      console.log("[AI Dispatcher] Using deterministic PMI Status report generator fallback");
 
       const metrics = projectSummary?.evmMetrics || {};
       const cpi = Number(metrics.cpi ?? 0.98);
@@ -1096,7 +1153,7 @@ Format with pristine Markdown and clear structured tables.`;
 
       return res.json({
         reportMarkdown: deterministicReport,
-        warning: `Notice: AI API was unavailable (${aiErr.message}). Report was computed directly from project EVM baselines.`,
+        warning: `Notice: Local indicators active (${extractCleanErrorMessage(aiErr).slice(0, 80)}).`,
       });
     }
   } catch (error: any) {

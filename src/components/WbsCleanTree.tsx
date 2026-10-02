@@ -787,7 +787,7 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
           </td>
 
           {/* Assignee column */}
-          <td className="py-2.5 px-3 relative">
+          <td className="py-2.5 px-3 relative whitespace-nowrap min-w-[150px]">
             {itemAssignees.length === 0 ? (
               <button
                 type="button"
@@ -1008,21 +1008,21 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
           </td>
 
           {/* Due Date column (Salmon/Red) */}
-          <td className="py-2.5 px-3 font-mono text-[11px] text-[#F87171]">
+          <td className="py-2.5 px-3 font-mono text-[11px] text-[#F87171] whitespace-nowrap min-w-[100px]">
             {formatShortDate(item.dueDate)}
           </td>
 
           {/* Priority column */}
-          <td className="py-2.5 px-3">{renderPriorityFlag(item)}</td>
+          <td className="py-2.5 px-3 whitespace-nowrap min-w-[80px]">{renderPriorityFlag(item)}</td>
 
           {/* Detailed EVM columns */}
           {showDetailedEvm && (
             <>
-              <td className="py-2.5 px-3 font-mono text-[11px] text-slate-300">
+              <td className="py-2.5 px-3 font-mono text-[11px] text-slate-300 whitespace-nowrap min-w-[110px]">
                 <span className="text-sky-400 font-semibold">{item.estimatedHours}h</span>{" "}
                 <span className="text-slate-500">({item.actualHours}h)</span>
               </td>
-              <td className="py-2.5 px-3 font-mono text-[11px] text-slate-300">
+              <td className="py-2.5 px-3 font-mono text-[11px] text-slate-300 whitespace-nowrap min-w-[110px]">
                 <span className="text-emerald-400 font-semibold">
                   ${(item.plannedBudget || 0).toLocaleString()}
                 </span>{" "}
@@ -1034,7 +1034,7 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
           )}
 
           {/* Actions column */}
-          <td className="py-2.5 pr-3 text-right">
+          <td className="py-2.5 pr-3 text-right whitespace-nowrap min-w-[60px]">
             <div className="flex items-center justify-end gap-1">
               <button
                 type="button"
@@ -1131,8 +1131,8 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
   return (
     <div className="bg-[#090D16] border border-[#1E293B] rounded-xl shadow-xl overflow-hidden font-sans">
       {/* 1. Top Sub-Navigation Tabs */}
-      <div className="flex items-center justify-between px-4 border-b border-[#1E293B] bg-[#060911] overflow-x-auto text-xs">
-        <div className="flex items-center gap-1 sm:gap-2">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between px-3 sm:px-4 border-b border-[#1E293B] bg-[#060911] text-xs gap-1.5 py-1 sm:py-0">
+        <div className="flex items-center gap-1 sm:gap-2 overflow-x-auto no-scrollbar">
           <button
             onClick={() => setActiveTab("List")}
             className={`flex items-center gap-2 px-3 py-3 font-semibold transition-colors border-b-2 cursor-pointer whitespace-nowrap ${
@@ -1210,7 +1210,7 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
         </div>
 
         {/* View Options Toggle & PMI Visual Toggles */}
-        <div className="flex items-center gap-2 py-1.5 shrink-0 pl-2">
+        <div className="flex items-center gap-2 py-1.5 shrink-0 overflow-x-auto no-scrollbar max-w-full">
           {/* Critical Path Toggle */}
           <button
             type="button"
@@ -1659,7 +1659,7 @@ export const WbsCleanTree: React.FC<WbsCleanTreeProps> = ({
 
                 {isGroupOpen && (
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs text-[#E2E8F0] border-collapse min-w-[620px]">
+                    <table className={`w-full text-left text-xs text-[#E2E8F0] border-collapse ${showDetailedEvm ? "min-w-[850px]" : "min-w-[720px]"}`}>
                       {/* 4B. Table Header */}
                       <thead>
                         <tr className="border-b border-[#1E293B]/70 text-[11px] text-slate-400 font-medium">

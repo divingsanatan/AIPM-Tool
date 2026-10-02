@@ -328,7 +328,7 @@ export const RaciView: React.FC<RaciViewProps> = ({
       {/* RACI Matrix Table */}
       <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-[#E2E8F0] border-collapse">
+          <table className="w-full text-left text-xs text-[#E2E8F0] border-collapse min-w-[760px]">
             <thead className="bg-[#060911] border-b border-[#1E293B] text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">
               <tr>
                 <th className="py-3.5 pl-5 pr-3 min-w-[300px]">WBS Deliverable Hierarchy</th>

@@ -219,19 +219,19 @@ export const GlobalFilterBar: React.FC<GlobalFilterBarProps> = ({
         </div>
 
         {/* Quick Search */}
-        <div>
+        <div className="min-w-0">
           <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">
             Search WBS / Deliverables
           </label>
-          <div className="relative">
-            <Search className="h-3.5 w-3.5 absolute left-2.5 top-2.5 text-slate-500 pointer-events-none" />
+          <div className="relative min-w-0">
+            <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-slate-500 pointer-events-none" />
             <input
               id="global-filter-search"
               type="text"
               value={filterState.searchQuery || ""}
               onChange={(e) => onFilterChange({ searchQuery: e.target.value })}
               placeholder="Filter by code or title..."
-              className="w-full bg-[#060911] border border-[#1E293B] hover:border-slate-700 focus:border-sky-400 focus:outline-hidden rounded-lg pl-8 pr-7 py-1.5 text-xs text-white placeholder-slate-500 font-mono transition-colors"
+              className="w-full min-w-0 bg-[#060911] border border-[#1E293B] hover:border-slate-700 focus:border-sky-400 focus:outline-hidden rounded-lg pl-8 pr-7 py-2 text-xs sm:text-sm text-white placeholder-slate-500 font-mono transition-colors"
             />
             {filterState.searchQuery && (
               <button

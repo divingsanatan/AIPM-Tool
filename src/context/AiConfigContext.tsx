@@ -86,6 +86,7 @@ interface AiConfigContextType {
   activeConfigId: string;
   activeConfig: AiApiConfig;
   setActiveConfigId: (id: string) => void;
+  resetToDefaultGemini: () => void;
   addConfig: (config: Omit<AiApiConfig, "id" | "createdAt">) => string;
   updateConfig: (id: string, updates: Partial<AiApiConfig>) => void;
   deleteConfig: (id: string) => void;
@@ -116,7 +117,16 @@ export const AiConfigProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     try {
       const savedActive = localStorage.getItem(LOCAL_STORAGE_ACTIVE_KEY);
       if (savedActive) {
-        return savedActive;
+        const savedConfigs = localStorage.getItem(LOCAL_STORAGE_CONFIGS_KEY);
+        const list: AiApiConfig[] = savedConfigs ? JSON.parse(savedConfigs) : DEFAULT_AI_CONFIGS;
+        const target = list.find((c) => c.id === savedActive);
+        if (target) {
+          // If it's an external provider that requires a key and none is provided, default to builtin-gemini
+          if (target.provider !== "gemini" && target.provider !== "local_pmi" && !target.apiKey?.trim()) {
+            return "builtin-gemini";
+          }
+          return savedActive;
+        }
       }
     } catch (e) {
       console.warn("Failed to load active AI config from localStorage:", e);
@@ -148,6 +158,10 @@ export const AiConfigProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const setActiveConfigId = useCallback((id: string) => {
     setActiveConfigIdState(id);
+  }, []);
+
+  const resetToDefaultGemini = useCallback(() => {
+    setActiveConfigIdState("builtin-gemini");
   }, []);
 
   const addConfig = useCallback((newConfigData: Omit<AiApiConfig, "id" | "createdAt">) => {
@@ -244,6 +258,7 @@ export const AiConfigProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         activeConfigId,
         activeConfig,
         setActiveConfigId,
+        resetToDefaultGemini,
         addConfig,
         updateConfig,
         deleteConfig,

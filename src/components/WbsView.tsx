@@ -532,11 +532,11 @@ export const WbsView: React.FC<WbsViewProps> = ({
               <option value="Subtask">Subtask</option>
             </select>
 
-            <div className="relative flex-1 md:w-56">
-              <Search className="h-3.5 w-3.5 absolute left-2.5 top-2 text-[#94A3B8]" />
+            <div className="relative flex-1 min-w-0 sm:w-64 md:w-80 lg:w-96">
+              <Search className="h-4 w-4 absolute left-2.5 top-2 text-[#94A3B8]" />
               <input
                 type="text"
-                placeholder="Search WBS..."
+                placeholder="Search WBS deliverables, tasks, codes..."
                 value={activeSearch}
                 onChange={(e) => {
                   setSearchQuery(e.target.value);
@@ -544,7 +544,7 @@ export const WbsView: React.FC<WbsViewProps> = ({
                     onUpdateGlobalFilter({ searchQuery: e.target.value });
                   }
                 }}
-                className="w-full bg-[#060911] border border-[#1E293B] rounded pl-8 pr-3 py-1 text-xs text-[#E2E8F0] placeholder-[#64748B] focus:outline-none focus:ring-1 focus:ring-[#38BDF8]"
+                className="w-full min-w-0 bg-[#060911] border border-[#1E293B] rounded-lg pl-8 pr-3 py-1.5 text-xs sm:text-sm text-[#E2E8F0] placeholder-[#64748B] focus:outline-none focus:ring-1 focus:ring-[#38BDF8]"
               />
             </div>
           </div>

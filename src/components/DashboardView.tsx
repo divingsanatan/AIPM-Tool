@@ -36,15 +36,29 @@ import {
   X,
   Cloud,
   RefreshCw,
+  BarChart2,
+  Activity,
+  Compass,
+  Target,
+  ExternalLink,
+  Zap,
+  TrendingDown,
+  LayoutGrid,
+  FolderOpen,
 } from "lucide-react";
 import {
   ResponsiveContainer,
   AreaChart,
   Area,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   Tooltip,
   CartesianGrid,
+  Legend,
+  ReferenceLine,
+  Cell,
 } from "recharts";
 import { generateSCurveData, calculateEvmMetrics } from "../utils/pmiCalculations";
 import {
@@ -67,14 +81,24 @@ import {
   getTotalBlockedSeconds,
   getActiveWorkSeconds,
 } from "../utils/wbsTimerUtils";
+import { ProjectRedirectionHub } from "./dashboard/ProjectRedirectionHub";
+import { PortfolioPerformanceView } from "./dashboard/PortfolioPerformanceView";
+import { DashboardAnalyticsCharts } from "./dashboard/DashboardAnalyticsCharts";
+import { SmartFiltersBar, DashboardViewMode, SmartPresetType } from "./dashboard/SmartFiltersBar";
+import { WbsVisualDeliveryHealth } from "./dashboard/WbsVisualDeliveryHealth";
 
 interface DashboardViewProps {
   wbsItems: WbsItem[];
+  allWbsItems?: WbsItem[];
   stakeholders: Stakeholder[];
+  allStakeholders?: Stakeholder[];
   raidItems: RaidItem[];
+  allRaidItems?: RaidItem[];
   changeRequests: ChangeRequest[];
+  allChangeRequests?: ChangeRequest[];
   evmMetrics: EvmMetrics;
   onNavigateTab: (tab: ActiveTab) => void;
+  onRedirectToArea?: (tab: ActiveTab, params?: { projectId?: string; sprintId?: string | null }) => void;
   onGenerateReportClick: (type: "risk" | "pmi") => void;
   globalFilter?: GlobalFilterState;
   onResetFilters?: () => void;
@@ -97,11 +121,16 @@ interface DashboardViewProps {
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
   wbsItems,
+  allWbsItems = [],
   stakeholders,
+  allStakeholders = [],
   raidItems,
+  allRaidItems = [],
   changeRequests,
+  allChangeRequests = [],
   evmMetrics: initialEvmMetrics,
   onNavigateTab,
+  onRedirectToArea,
   onGenerateReportClick,
   globalFilter,
   onResetFilters,
@@ -121,8 +150,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   isSyncing = false,
   lastSyncTime = null,
 }) => {
+  const [viewMode, setViewMode] = useState<DashboardViewMode>("overview");
+  const [smartPreset, setSmartPreset] = useState<SmartPresetType>("ALL");
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [selectedAssigneeId, setSelectedAssigneeId] = useState<string>("ALL");
   const [wbsFilter, setWbsFilter] = useState<string>("All");
   const [showAllWbs, setShowAllWbs] = useState<boolean>(false);
+  const [activePreset, setActivePreset] = useState<"ALL" | "PORTFOLIO" | "FINANCIAL" | "DELIVERY" | "RISKS">("ALL");
+  const [sprintViewMode, setSprintViewMode] = useState<"chart" | "table">("chart");
+  const [healthFilter, setHealthFilter] = useState<"ALL" | "HEALTHY" | "AT_RISK" | "BLOCKED">("ALL");
 
   const selectedProjectObj = useMemo(() => {
     if (activeProjectId === "all" || !projects.length) return null;
@@ -288,14 +324,72 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const filtersActive = globalFilter ? isFilterActive(globalFilter) : false;
 
-  // Filtered WBS preview - respect globalFilter first, then sprint filter from left menu
+  const blockedCount = useMemo(() => {
+    return scopedWbsItems.filter((i) => i.status === "Blocked" || getTotalBlockedSeconds(i) > 0).length;
+  }, [scopedWbsItems]);
+
+  const criticalPathCount = useMemo(() => {
+    return scopedWbsItems.filter((i) => i.isCriticalPath).length;
+  }, [scopedWbsItems]);
+
+  // Filtered WBS preview - respect globalFilter first, smartPreset, search query, assignee
   const matchingWbsItems = useMemo(() => {
     let items = scopedWbsItems;
     if (globalFilter && filtersActive) {
       items = items.filter((item) => doesItemMatchFilters(item, globalFilter));
     }
+
+    // Search query filter
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      items = items.filter(
+        (i) =>
+          i.title.toLowerCase().includes(q) ||
+          i.wbsCode.toLowerCase().includes(q) ||
+          i.description?.toLowerCase().includes(q)
+      );
+    }
+
+    // Assignee filter
+    if (selectedAssigneeId !== "ALL") {
+      if (selectedAssigneeId === "UNASSIGNED") {
+        items = items.filter((i) => !i.assignedStakeholderId);
+      } else {
+        items = items.filter((i) => i.assignedStakeholderId === selectedAssigneeId);
+      }
+    }
+
+    // Smart Preset filter
+    if (smartPreset === "AT_RISK_BLOCKED") {
+      items = items.filter((i) => i.status === "Blocked" || getTotalBlockedSeconds(i) > 0);
+    } else if (smartPreset === "CRITICAL_PATH") {
+      items = items.filter((i) => i.isCriticalPath);
+    } else if (smartPreset === "BEHIND_SCHEDULE") {
+      items = items.filter((i) => i.status !== "Done" && (i.progressPercent || 0) < 50);
+    } else if (smartPreset === "BUDGET_HOTSPOTS") {
+      items = items.filter((i) => (Number(i.actualCost) || 0) > (Number(i.plannedBudget) || 0));
+    } else if (smartPreset === "MILESTONES") {
+      items = items.filter((i) => i.type === "Milestone");
+    }
+
     return items;
-  }, [scopedWbsItems, globalFilter, filtersActive]);
+  }, [scopedWbsItems, globalFilter, filtersActive, searchQuery, selectedAssigneeId, smartPreset]);
+
+  const isSmartFilterActive =
+    filtersActive ||
+    Boolean(searchQuery.trim()) ||
+    selectedAssigneeId !== "ALL" ||
+    smartPreset !== "ALL" ||
+    Boolean(selectedSprintId);
+
+  const handleResetAllSmartFilters = () => {
+    setSearchQuery("");
+    setSelectedAssigneeId("ALL");
+    setSmartPreset("ALL");
+    setWbsFilter("All");
+    if (onSelectSprint) onSelectSprint(null);
+    if (onResetFilters) onResetFilters();
+  };
 
   // Dynamic status & automatic progress metrics across WBS
   const statusStats = useMemo(() => {
@@ -574,182 +668,252 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
+      {/* Smart Filters & View Mode Navigation Bar */}
+      <SmartFiltersBar
+        viewMode={viewMode}
+        onSelectViewMode={setViewMode}
+        smartPreset={smartPreset}
+        onSelectSmartPreset={setSmartPreset}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        selectedSprintId={selectedSprintId}
+        onSelectSprint={onSelectSprint || (() => {})}
+        sprints={currentProjectSprints}
+        selectedAssigneeId={selectedAssigneeId}
+        onSelectAssignee={setSelectedAssigneeId}
+        stakeholders={stakeholders}
+        totalItemCount={scopedWbsItems.length}
+        filteredItemCount={matchingWbsItems.length}
+        blockedCount={blockedCount}
+        criticalPathCount={criticalPathCount}
+        onResetAllFilters={handleResetAllSmartFilters}
+        isFilterActive={isSmartFilterActive}
+      />
+
+      {/* View Mode: Cross-Project Portfolio Performance Benchmark */}
+      {viewMode === "portfolio" && (
+        <PortfolioPerformanceView
+          projects={projects}
+          allWbsItems={allWbsItems.length > 0 ? allWbsItems : wbsItems}
+          allRaidItems={allRaidItems.length > 0 ? allRaidItems : raidItems}
+          allSprints={sprints}
+          activeProjectId={activeProjectId}
+          onSelectProject={onSelectProject}
+          onRedirectToArea={onRedirectToArea}
+          onNavigateTab={onNavigateTab}
+        />
+      )}
+
+      {/* View Mode: Charts & Graphs Analytics Suite */}
+      {viewMode === "charts" && (
+        <DashboardAnalyticsCharts
+          wbsItems={matchingWbsItems}
+          stakeholders={stakeholders}
+          raidItems={scopedRaidItems}
+          sprints={currentProjectSprints}
+          evmMetrics={evmMetrics}
+          statusConfigs={statusConfigs}
+          sprintRollups={sprintRollups}
+          onNavigateTab={onNavigateTab}
+          onRedirectToArea={onRedirectToArea}
+          onSelectSprint={onSelectSprint}
+        />
+      )}
+
       {/* 4 Core High-Contrast KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        {/* CPI Card */}
-        <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 shadow-xs flex flex-col justify-between">
-          <div>
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
-                  <DollarSign className="w-4 h-4" />
+      {viewMode !== "portfolio" && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+          {/* CPI Card */}
+          <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 shadow-xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
+                    <DollarSign className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-xs font-bold text-slate-300 uppercase tracking-wider font-mono whitespace-nowrap">
+                      CPI
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-sans ml-1.5 whitespace-nowrap hidden min-[360px]:inline">
+                      (Cost Efficiency)
+                    </span>
+                  </div>
                 </div>
-                <div className="min-w-0">
-                  <span className="text-xs font-bold text-slate-300 uppercase tracking-wider font-mono whitespace-nowrap">
-                    CPI
-                  </span>
-                  <span className="text-[10px] text-slate-400 font-sans ml-1.5 whitespace-nowrap hidden min-[360px]:inline">
-                    (Cost Efficiency)
-                  </span>
-                </div>
-              </div>
-              <span
-                className={`shrink-0 text-[10px] font-mono font-bold px-2 py-0.5 rounded whitespace-nowrap ${
-                  evmMetrics.cpi >= 1.0
-                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-                    : "bg-amber-500/20 text-amber-300 border border-amber-500/30"
-                }`}
-              >
-                {evmMetrics.costStatus}
-              </span>
-            </div>
-            <div className="mt-3 flex items-baseline justify-between gap-2 flex-wrap">
-              <span className="text-2xl sm:text-3xl font-bold tracking-tight text-white font-mono">
-                {evmMetrics.cpi.toFixed(2)}
-              </span>
-              <span className="text-xs text-slate-400 font-mono whitespace-nowrap">Target: 1.00</span>
-            </div>
-            <div className="mt-2.5 flex items-center justify-between text-xs font-mono pt-2 border-t border-[#1E293B]">
-              <span className="text-slate-400 whitespace-nowrap">Cost Variance (CV):</span>
-              <span
-                className={`font-bold whitespace-nowrap ${
-                  evmMetrics.cv >= 0 ? "text-emerald-400" : "text-rose-400"
-                }`}
-              >
-                {evmMetrics.cv >= 0 ? "+" : ""}${evmMetrics.cv.toLocaleString()}
-              </span>
-            </div>
-          </div>
-          <p className="text-[11px] text-slate-400 mt-2 font-sans">
-            ${laborAnalytics.earnedValuePerDollar.toFixed(2)} EV delivered per $1.00 spent
-          </p>
-        </div>
-
-        {/* SPI Card */}
-        <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 shadow-xs flex flex-col justify-between">
-          <div>
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="p-1.5 rounded-lg bg-sky-500/10 text-sky-400 border border-sky-500/20 shrink-0">
-                  <Calendar className="w-4 h-4" />
-                </div>
-                <div className="min-w-0">
-                  <span className="text-xs font-bold text-slate-300 uppercase tracking-wider font-mono whitespace-nowrap">
-                    SPI
-                  </span>
-                  <span className="text-[10px] text-slate-400 font-sans ml-1.5 whitespace-nowrap hidden min-[360px]:inline">
-                    (Schedule Pacing)
-                  </span>
-                </div>
-              </div>
-              <span
-                className={`shrink-0 text-[10px] font-mono font-bold px-2 py-0.5 rounded whitespace-nowrap ${
-                  evmMetrics.spi >= 1.0
-                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-                    : "bg-amber-500/20 text-amber-300 border border-amber-500/30"
-                }`}
-              >
-                {evmMetrics.scheduleStatus}
-              </span>
-            </div>
-            <div className="mt-3 flex items-baseline justify-between gap-2 flex-wrap">
-              <span className="text-2xl sm:text-3xl font-bold tracking-tight text-white font-mono">
-                {evmMetrics.spi.toFixed(2)}
-              </span>
-              <span className="text-xs text-slate-400 font-mono whitespace-nowrap">Target: 1.00</span>
-            </div>
-            <div className="mt-2.5 flex items-center justify-between text-xs font-mono pt-2 border-t border-[#1E293B]">
-              <span className="text-slate-400 whitespace-nowrap">Schedule Variance:</span>
-              <span
-                className={`font-bold whitespace-nowrap ${
-                  evmMetrics.sv >= 0 ? "text-emerald-400" : "text-amber-400"
-                }`}
-              >
-                {evmMetrics.sv >= 0 ? "+" : ""}${evmMetrics.sv.toLocaleString()}
-              </span>
-            </div>
-          </div>
-          <p className="text-[11px] text-slate-400 mt-2 font-sans">
-            Critical path projected slip: +{criticalAnalytics.projectedScheduleSlipDays} days
-          </p>
-        </div>
-
-        {/* EAC Card */}
-        <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 shadow-xs flex flex-col justify-between">
-          <div>
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="p-1.5 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/20 shrink-0">
-                  <TrendingUp className="w-4 h-4" />
-                </div>
-                <span className="text-xs font-bold text-slate-300 uppercase tracking-wider font-mono whitespace-nowrap">
-                  EAC Forecast
+                <span
+                  className={`shrink-0 text-[10px] font-mono font-bold px-2 py-0.5 rounded whitespace-nowrap ${
+                    evmMetrics.cpi >= 1.0
+                      ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                      : "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                  }`}
+                >
+                  {evmMetrics.costStatus}
                 </span>
               </div>
-              <span className="shrink-0 text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
-                BAC: ${(evmMetrics.bac / 1000).toFixed(0)}k
-              </span>
-            </div>
-            <div className="mt-3 flex items-baseline justify-between gap-2 flex-wrap">
-              <span className="text-2xl sm:text-3xl font-bold tracking-tight text-white font-mono">
-                ${(evmMetrics.eac / 1000).toFixed(1)}k
-              </span>
-              <span
-                className={`text-xs font-mono font-semibold whitespace-nowrap ${
-                  evmMetrics.vac >= 0 ? "text-emerald-400" : "text-rose-400"
-                }`}
-              >
-                VAC: {evmMetrics.vac >= 0 ? "+" : ""}${(evmMetrics.vac / 1000).toFixed(1)}k
-              </span>
-            </div>
-            <div className="mt-2.5 flex items-center justify-between text-xs font-mono pt-2 border-t border-[#1E293B]">
-              <span className="text-slate-400 whitespace-nowrap">Dual-Factor Risk:</span>
-              <span className="font-bold text-amber-400 whitespace-nowrap">
-                ${(dualFactorEac / 1000).toFixed(1)}k
-              </span>
-            </div>
-          </div>
-          <p className="text-[11px] text-slate-400 mt-2 font-sans">
-            Most likely outcome: ${(mostLikelyEac / 1000).toFixed(1)}k (CPI continuation)
-          </p>
-        </div>
-
-        {/* Contingency Runway Card */}
-        <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 shadow-xs flex flex-col justify-between">
-          <div>
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">
-                  <Scale className="w-4 h-4" />
-                </div>
-                <span className="text-xs font-bold text-slate-300 uppercase tracking-wider font-mono whitespace-nowrap">
-                  Contingency Reserve
+              <div className="mt-3 flex items-baseline justify-between gap-2 flex-wrap">
+                <span className="text-2xl sm:text-3xl font-bold tracking-tight text-white font-mono">
+                  {evmMetrics.cpi.toFixed(2)}
+                </span>
+                <span className="text-xs text-slate-400 font-mono whitespace-nowrap">Target: 1.00</span>
+              </div>
+              <div className="mt-2.5 flex items-center justify-between text-xs font-mono pt-2 border-t border-[#1E293B]">
+                <span className="text-slate-400 whitespace-nowrap">Cost Variance (CV):</span>
+                <span
+                  className={`font-bold whitespace-nowrap ${
+                    evmMetrics.cv >= 0 ? "text-emerald-400" : "text-rose-400"
+                  }`}
+                >
+                  {evmMetrics.cv >= 0 ? "+" : ""}${evmMetrics.cv.toLocaleString()}
                 </span>
               </div>
-              <span className="shrink-0 text-[10px] font-mono px-2 py-0.5 rounded bg-blue-950/80 text-blue-400 border border-blue-800 font-semibold whitespace-nowrap">
-                {contingencyAnalytics.contingencyBurnRatePercent}% Used
-              </span>
             </div>
-            <div className="mt-3 flex items-baseline justify-between gap-2 flex-wrap">
-              <span className="text-2xl sm:text-3xl font-bold tracking-tight text-emerald-400 font-mono">
-                ${(contingencyAnalytics.remainingContingency / 1000).toFixed(1)}k
-              </span>
-              <span className="text-xs text-slate-400 font-mono whitespace-nowrap">free buffer</span>
-            </div>
-            <div className="mt-2.5 flex items-center justify-between text-xs font-mono pt-2 border-t border-[#1E293B]">
-              <span className="text-slate-400 whitespace-nowrap">Total Authorized:</span>
-              <span className="font-bold text-white whitespace-nowrap">
-                ${(contingencyAnalytics.totalContingencyReserve / 1000).toFixed(0)}k
-              </span>
-            </div>
+            <p className="text-[11px] text-slate-400 mt-2 font-sans">
+              ${laborAnalytics.earnedValuePerDollar.toFixed(2)} EV delivered per $1.00 spent
+            </p>
           </div>
-          <p className="text-[11px] text-slate-400 mt-2 font-sans">
-            ${contingencyAnalytics.consumedByApprovedCr.toLocaleString()} spent · ${contingencyAnalytics.pendingCrExposure.toLocaleString()} pending CCB
-          </p>
+
+          {/* SPI Card */}
+          <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 shadow-xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="p-1.5 rounded-lg bg-sky-500/10 text-sky-400 border border-sky-500/20 shrink-0">
+                    <Calendar className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-xs font-bold text-slate-300 uppercase tracking-wider font-mono whitespace-nowrap">
+                      SPI
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-sans ml-1.5 whitespace-nowrap hidden min-[360px]:inline">
+                      (Schedule Pacing)
+                    </span>
+                  </div>
+                </div>
+                <span
+                  className={`shrink-0 text-[10px] font-mono font-bold px-2 py-0.5 rounded whitespace-nowrap ${
+                    evmMetrics.spi >= 1.0
+                      ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                      : "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                  }`}
+                >
+                  {evmMetrics.scheduleStatus}
+                </span>
+              </div>
+              <div className="mt-3 flex items-baseline justify-between gap-2 flex-wrap">
+                <span className="text-2xl sm:text-3xl font-bold tracking-tight text-white font-mono">
+                  {evmMetrics.spi.toFixed(2)}
+                </span>
+                <span className="text-xs text-slate-400 font-mono whitespace-nowrap">Target: 1.00</span>
+              </div>
+              <div className="mt-2.5 flex items-center justify-between text-xs font-mono pt-2 border-t border-[#1E293B]">
+                <span className="text-slate-400 whitespace-nowrap">Schedule Variance:</span>
+                <span
+                  className={`font-bold whitespace-nowrap ${
+                    evmMetrics.sv >= 0 ? "text-emerald-400" : "text-amber-400"
+                  }`}
+                >
+                  {evmMetrics.sv >= 0 ? "+" : ""}${evmMetrics.sv.toLocaleString()}
+                </span>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-2 font-sans">
+              Critical path projected slip: +{criticalAnalytics.projectedScheduleSlipDays} days
+            </p>
+          </div>
+
+          {/* EAC Card */}
+          <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 shadow-xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="p-1.5 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/20 shrink-0">
+                    <TrendingUp className="w-4 h-4" />
+                  </div>
+                  <span className="text-xs font-bold text-slate-300 uppercase tracking-wider font-mono whitespace-nowrap">
+                    EAC Forecast
+                  </span>
+                </div>
+                <span className="shrink-0 text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
+                  BAC: ${(evmMetrics.bac / 1000).toFixed(0)}k
+                </span>
+              </div>
+              <div className="mt-3 flex items-baseline justify-between gap-2 flex-wrap">
+                <span className="text-2xl sm:text-3xl font-bold tracking-tight text-white font-mono">
+                  ${(evmMetrics.eac / 1000).toFixed(1)}k
+                </span>
+                <span
+                  className={`text-xs font-mono font-semibold whitespace-nowrap ${
+                    evmMetrics.vac >= 0 ? "text-emerald-400" : "text-rose-400"
+                  }`}
+                >
+                  VAC: {evmMetrics.vac >= 0 ? "+" : ""}${(evmMetrics.vac / 1000).toFixed(1)}k
+                </span>
+              </div>
+              <div className="mt-2.5 flex items-center justify-between text-xs font-mono pt-2 border-t border-[#1E293B]">
+                <span className="text-slate-400 whitespace-nowrap">Dual-Factor Risk:</span>
+                <span className="font-bold text-amber-400 whitespace-nowrap">
+                  ${(dualFactorEac / 1000).toFixed(1)}k
+                </span>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-2 font-sans">
+              Most likely outcome: ${(mostLikelyEac / 1000).toFixed(1)}k (CPI continuation)
+            </p>
+          </div>
+
+          {/* Contingency Runway Card */}
+          <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 shadow-xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">
+                    <Scale className="w-4 h-4" />
+                  </div>
+                  <span className="text-xs font-bold text-slate-300 uppercase tracking-wider font-mono whitespace-nowrap">
+                    Contingency Reserve
+                  </span>
+                </div>
+                <span className="shrink-0 text-[10px] font-mono px-2 py-0.5 rounded bg-blue-950/80 text-blue-400 border border-blue-800 font-semibold whitespace-nowrap">
+                  {contingencyAnalytics.contingencyBurnRatePercent}% Used
+                </span>
+              </div>
+              <div className="mt-3 flex items-baseline justify-between gap-2 flex-wrap">
+                <span className="text-2xl sm:text-3xl font-bold tracking-tight text-emerald-400 font-mono">
+                  ${(contingencyAnalytics.remainingContingency / 1000).toFixed(1)}k
+                </span>
+                <span className="text-xs text-slate-400 font-mono whitespace-nowrap">free buffer</span>
+              </div>
+              <div className="mt-2.5 flex items-center justify-between text-xs font-mono pt-2 border-t border-[#1E293B]">
+                <span className="text-slate-400 whitespace-nowrap">Total Authorized:</span>
+                <span className="font-bold text-white whitespace-nowrap">
+                  ${(contingencyAnalytics.totalContingencyReserve / 1000).toFixed(0)}k
+                </span>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-2 font-sans">
+              ${contingencyAnalytics.consumedByApprovedCr.toLocaleString()} spent · ${contingencyAnalytics.pendingCrExposure.toLocaleString()} pending CCB
+            </p>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Fast Project Redirection Hub */}
+      {(viewMode === "overview" || viewMode === "packages") && (
+        <ProjectRedirectionHub
+          onNavigateTab={onNavigateTab}
+          onRedirectToArea={onRedirectToArea}
+          activeProjectName={selectedProjectObj ? selectedProjectObj.name : "Enterprise Portfolio"}
+          activeProjectId={activeProjectId}
+          selectedSprintId={selectedSprintId}
+          totalWorkPackages={scopedWbsItems.length}
+          totalRisks={scopedRaidItems.length}
+          totalStakeholders={stakeholders.length}
+          totalChangeRequests={changeRequests.length}
+        />
+      )}
 
       {/* All Sprints Roll-up & Aggregated Delivery Performance */}
+      {viewMode === "overview" && (
       <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 sm:p-5 shadow-xs space-y-4">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b border-[#1E293B]">
           <div className="min-w-0">
@@ -874,20 +1038,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {/* Detailed Sprint By Sprint Aggregation Breakdown Table */}
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse min-w-[700px]">
+          <table className="w-full text-left text-xs border-collapse min-w-[960px]">
             <thead>
               <tr className="border-b border-[#1E293B] text-[10px] font-mono text-slate-400 uppercase">
-                <th className="py-2.5 px-3">Sprint Name</th>
-                <th className="py-2.5 px-3">Timeline</th>
-                <th className="py-2.5 px-3 text-center">Status</th>
-                <th className="py-2.5 px-3 text-right">Work Packages</th>
-                <th className="py-2.5 px-3 text-right">Planned (PV)</th>
-                <th className="py-2.5 px-3 text-right">Earned (EV)</th>
-                <th className="py-2.5 px-3 text-right">Actual (AC)</th>
-                <th className="py-2.5 px-3 text-right">CV</th>
-                <th className="py-2.5 px-3 text-right">Hours</th>
-                <th className="py-2.5 px-3 text-center">CPI</th>
-                <th className="py-2.5 px-3 text-center">Action</th>
+                <th className="py-2.5 px-3 min-w-[160px]">Sprint Name</th>
+                <th className="py-2.5 px-3 whitespace-nowrap">Timeline</th>
+                <th className="py-2.5 px-3 text-center whitespace-nowrap">Status</th>
+                <th className="py-2.5 px-3 text-right whitespace-nowrap">Work Packages</th>
+                <th className="py-2.5 px-3 text-right whitespace-nowrap">Planned (PV)</th>
+                <th className="py-2.5 px-3 text-right whitespace-nowrap">Earned (EV)</th>
+                <th className="py-2.5 px-3 text-right whitespace-nowrap">Actual (AC)</th>
+                <th className="py-2.5 px-3 text-right whitespace-nowrap">CV</th>
+                <th className="py-2.5 px-3 text-right whitespace-nowrap">Hours</th>
+                <th className="py-2.5 px-3 text-center whitespace-nowrap">CPI</th>
+                <th className="py-2.5 px-3 text-center whitespace-nowrap">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#1A2234]">
@@ -902,16 +1066,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         : "hover:bg-[#0E1526]"
                     }`}
                   >
-                    <td className="py-3 px-3 font-semibold text-white flex items-center gap-2">
+                    <td className="py-3 px-3 font-semibold text-white flex items-center gap-2 whitespace-nowrap">
                       <div className="w-4 h-4 rounded-full border border-emerald-500/80 text-emerald-400 flex items-center justify-center shrink-0">
                         <Play className="w-2 h-2 fill-current ml-0.5" />
                       </div>
                       <span className="truncate">{sr.sprint.name}</span>
                     </td>
-                    <td className="py-3 px-3 text-slate-400 font-mono text-[11px]">
+                    <td className="py-3 px-3 text-slate-400 font-mono text-[11px] whitespace-nowrap">
                       {sr.sprint.startDate.slice(5)} to {sr.sprint.endDate.slice(5)}
                     </td>
-                    <td className="py-3 px-3 text-center">
+                    <td className="py-3 px-3 text-center whitespace-nowrap">
                       <span
                         className={`inline-block px-2 py-0.5 rounded text-[10px] font-mono font-semibold ${
                           sr.sprint.status === "Completed"
@@ -930,26 +1094,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         ({sr.completedCount} done)
                       </span>
                     </td>
-                    <td className="py-3 px-3 text-right font-mono text-sky-400">
+                    <td className="py-3 px-3 text-right font-mono text-sky-400 whitespace-nowrap">
                       ${sr.plannedBudget.toLocaleString()}
                     </td>
-                    <td className="py-3 px-3 text-right font-mono text-emerald-400 font-semibold">
+                    <td className="py-3 px-3 text-right font-mono text-emerald-400 font-semibold whitespace-nowrap">
                       ${sr.earnedValue.toLocaleString()}
                     </td>
-                    <td className="py-3 px-3 text-right font-mono text-amber-400">
+                    <td className="py-3 px-3 text-right font-mono text-amber-400 whitespace-nowrap">
                       ${sr.actualCost.toLocaleString()}
                     </td>
                     <td
-                      className={`py-3 px-3 text-right font-mono font-semibold ${
+                      className={`py-3 px-3 text-right font-mono font-semibold whitespace-nowrap ${
                         sr.sprintCv >= 0 ? "text-emerald-400" : "text-rose-400"
                       }`}
                     >
                       {sr.sprintCv >= 0 ? "+" : ""}${sr.sprintCv.toLocaleString()}
                     </td>
-                    <td className="py-3 px-3 text-right font-mono text-slate-300">
+                    <td className="py-3 px-3 text-right font-mono text-slate-300 whitespace-nowrap">
                       {sr.actualHours}h / {sr.estimatedHours}h
                     </td>
-                    <td className="py-3 px-3 text-center font-mono">
+                    <td className="py-3 px-3 text-center font-mono whitespace-nowrap">
                       <span
                         className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
                           sr.sprintCpi >= 1.0
@@ -960,7 +1124,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         {sr.sprintCpi.toFixed(2)}
                       </span>
                     </td>
-                    <td className="py-3 px-3 text-center">
+                    <td className="py-3 px-3 text-center whitespace-nowrap">
                       <div className="flex items-center justify-center gap-1.5">
                         <button
                           type="button"
@@ -1054,8 +1218,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </table>
         </div>
       </div>
+      )}
 
       {/* Middle Section: S-Curve Chart & Analytical Forecast Panel */}
+      {viewMode === "overview" && (
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         {/* EVM Cumulative S-Curve (2 Cols on XL) */}
         <div className="xl:col-span-2 bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 sm:p-5 shadow-xs flex flex-col justify-between">
@@ -1302,8 +1468,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       </div>
+      )}
 
       {/* Workflow Status & Automated Progress Telemetry */}
+      {viewMode === "overview" && (
       <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 sm:p-5 shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#1E293B]">
           <div>
@@ -1408,8 +1576,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           })}
         </div>
       </div>
+      )}
 
       {/* Blocked Work Items & Impediment Duration Hub */}
+      {(viewMode === "overview" || viewMode === "blockers") && (
       <div className="bg-[#0B0F19] border border-[#1E293B] rounded-xl p-4 sm:p-5 shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#1E293B]">
           <div className="min-w-0">
@@ -1479,16 +1649,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-separate border-spacing-y-1.5 min-w-[700px]">
+            <table className="w-full text-left text-xs border-separate border-spacing-y-1.5 min-w-[880px]">
               <thead>
                 <tr className="text-slate-400 text-[10px] uppercase font-mono">
-                  <th className="pb-1 pl-3">WBS Code</th>
-                  <th className="pb-1">Deliverable / Task</th>
-                  <th className="pb-1">Assigned Stakeholder</th>
-                  <th className="pb-1">Time Spent Blocked</th>
-                  <th className="pb-1">Blocked Started</th>
-                  <th className="pb-1">Impediment / Reason</th>
-                  <th className="pb-1 pr-3 text-right">Action</th>
+                  <th className="pb-1 pl-3 pr-2 whitespace-nowrap min-w-[90px]">WBS Code</th>
+                  <th className="pb-1 px-3 min-w-[200px]">Deliverable / Task</th>
+                  <th className="pb-1 px-3 whitespace-nowrap min-w-[160px]">Assigned Stakeholder</th>
+                  <th className="pb-1 px-3 whitespace-nowrap min-w-[135px]">Time Spent Blocked</th>
+                  <th className="pb-1 px-3 whitespace-nowrap min-w-[125px]">Blocked Started</th>
+                  <th className="pb-1 px-3 min-w-[180px]">Impediment / Reason</th>
+                  <th className="pb-1 pl-2 pr-3 text-right whitespace-nowrap min-w-[105px]">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -1502,40 +1672,40 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       key={item.id}
                       className="bg-[#060911] rounded-lg hover:bg-[#0E1526] transition-colors border border-rose-900/30"
                     >
-                      <td className="py-2.5 pl-3 font-mono text-rose-400 font-bold">
+                      <td className="py-2.5 pl-3 pr-2 font-mono text-rose-400 font-bold whitespace-nowrap min-w-[90px]">
                         {item.wbsCode}
                       </td>
-                      <td className="py-2.5 font-medium text-white max-w-xs truncate">
+                      <td className="py-2.5 px-3 font-medium text-white min-w-[200px]">
                         <span>{item.title}</span>
                         <span className="ml-2 text-[10px] text-slate-400 font-mono uppercase">
                           {item.type}
                         </span>
                       </td>
-                      <td className="py-2.5 text-slate-300">
+                      <td className="py-2.5 px-3 text-slate-300 whitespace-nowrap min-w-[160px]">
                         <div className="flex items-center gap-1.5">
                           <span className="font-medium">{getStakeholderName(item.assignedStakeholderId)}</span>
                           <span className="text-[10px] font-mono text-slate-500">(${hourlyRate}/h)</span>
                         </div>
                       </td>
-                      <td className="py-2.5 font-mono">
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse">
+                      <td className="py-2.5 px-3 font-mono whitespace-nowrap min-w-[135px]">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse whitespace-nowrap">
                           <Clock className="w-3 h-3 text-rose-400" />
                           <span>{formatDurationSeconds(blockedSec)}</span>
                         </span>
                       </td>
-                      <td className="py-2.5 font-mono text-[11px] text-slate-400">
+                      <td className="py-2.5 px-3 font-mono text-[11px] text-slate-400 whitespace-nowrap min-w-[125px]">
                         {item.blockedStartedAt ? new Date(item.blockedStartedAt).toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "Active session"}
                       </td>
-                      <td className="py-2.5 text-slate-300 text-[11px] max-w-sm truncate">
+                      <td className="py-2.5 px-3 text-slate-300 text-[11px] min-w-[180px]">
                         <span className="text-amber-300 font-mono">
                           {item.blockedReason || "Impediment logged • Waiting on resolution"}
                         </span>
                       </td>
-                      <td className="py-2.5 pr-3 text-right">
+                      <td className="py-2.5 pl-2 pr-3 text-right whitespace-nowrap min-w-[105px]">
                         <button
                           type="button"
                           onClick={() => onNavigateTab("wbs")}
-                          className="px-2 py-1 rounded bg-rose-950/60 hover:bg-rose-900 text-rose-200 border border-rose-700/50 text-[10px] font-mono font-medium transition-colors cursor-pointer"
+                          className="px-2 py-1 rounded bg-rose-950/60 hover:bg-rose-900 text-rose-200 border border-rose-700/50 text-[10px] font-mono font-medium transition-colors cursor-pointer whitespace-nowrap"
                         >
                           Resolve in WBS
                         </button>
@@ -1548,215 +1718,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         )}
       </div>
+      )}
 
       {/* Bottom Operational Section: WBS Tracker & RAID Intelligence */}
+      {(viewMode === "overview" || viewMode === "packages") && (
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        {/* WBS Deliverables & Delivery Health (2 Cols on XL) */}
-        <div className="xl:col-span-2 bg-[#0B0F19] rounded-xl border border-[#1E293B] p-4 sm:p-5 flex flex-col justify-between shadow-xs">
-          <div>
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#1E293B]">
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h3 className="text-xs font-bold text-white uppercase tracking-wider font-mono">
-                    WBS Work Packages & Delivery Health
-                  </h3>
-                  {filtersActive && (
-                    <span className="px-2 py-0.2 rounded text-[10px] font-mono font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30">
-                      {matchingWbsItems.length} of {wbsItems.length} filtered
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-slate-400 mt-0.5 font-sans">
-                  Hierarchical decomposition, assigned stakeholders, and automated progress levels
-                </p>
-              </div>
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {["All", "Milestone", "Task"].map((filter) => (
-                  <button
-                    key={filter}
-                    onClick={() => setWbsFilter(filter)}
-                    className={`text-xs px-2.5 py-1 rounded-md transition-colors cursor-pointer font-mono ${
-                      wbsFilter === filter
-                        ? "bg-sky-400 text-slate-950 font-bold"
-                        : "bg-[#141C2E] text-slate-300 hover:text-white border border-slate-800"
-                    }`}
-                  >
-                    {filter}
-                  </button>
-                ))}
-                {statusConfigs.map((cfg) => (
-                  <button
-                    key={cfg.key}
-                    onClick={() => setWbsFilter(cfg.key)}
-                    className={`text-xs px-2 py-1 rounded-md transition-colors cursor-pointer font-mono flex items-center gap-1 border ${
-                      wbsFilter === cfg.key
-                        ? `${cfg.badgeBg} ${cfg.badgeText} ${cfg.badgeBorder} font-bold ring-1 ring-sky-400`
-                        : "bg-[#141C2E] text-slate-400 hover:text-slate-200 border-slate-800"
-                    }`}
-                  >
-                    <span className={`w-1.5 h-1.5 rounded-full ${cfg.dotColor}`} />
-                    <span>{cfg.label}</span>
-                  </button>
-                ))}
-                <button
-                  onClick={() => onNavigateTab("wbs")}
-                  className="text-xs bg-[#1E293B] hover:bg-slate-700 text-white px-2.5 py-1 rounded-md transition-colors flex items-center gap-1 cursor-pointer font-mono ml-1"
-                >
-                  <span>Full WBS</span>
-                  <ArrowUpRight className="w-3 h-3 text-sky-400" />
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-3 overflow-x-auto">
-              <table className="w-full text-left text-xs border-separate border-spacing-y-2 min-w-[620px]">
-                <thead>
-                  <tr className="text-slate-400 text-[10px] uppercase font-mono">
-                    <th className="pb-1 pl-2">WBS ID</th>
-                    <th className="pb-1">Work Package</th>
-                    <th className="pb-1">Sprint</th>
-                    <th className="pb-1">Priority</th>
-                    <th className="pb-1">Owner</th>
-                    <th className="pb-1">Status</th>
-                    <th className="pb-1 pr-2 text-right">Health</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredWbsItems.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="py-8 text-center text-slate-400 font-mono text-xs bg-[#060911] rounded-lg">
-                        <div className="flex flex-col items-center justify-center gap-2">
-                          <Filter className="h-5 w-5 text-slate-500" />
-                          <span>No work packages match the active filter criteria.</span>
-                          {onResetFilters && (
-                            <button
-                              onClick={onResetFilters}
-                              className="text-xs text-sky-400 hover:text-sky-300 underline cursor-pointer"
-                            >
-                              Reset filters to view all items
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredWbsItems.map((item) => {
-                      const itemPriority = getItemPriority(item);
-                      return (
-                        <tr
-                          key={item.id}
-                          className={`bg-[#060911] rounded-lg hover:bg-[#0E1526] transition-colors border border-slate-900 ${
-                            item.status === "Blocked"
-                              ? "border-l-2 border-l-amber-500"
-                              : item.isCriticalPath
-                              ? "border-l-2 border-l-sky-400"
-                              : ""
-                          }`}
-                        >
-                          <td className="py-2.5 pl-3 font-mono text-sky-400 font-semibold">
-                            {item.wbsCode}
-                          </td>
-                          <td className="py-2.5 font-medium text-white">
-                            {item.title}
-                            <span className="ml-2 text-[10px] font-normal text-slate-400 uppercase font-mono">
-                              {item.type}
-                            </span>
-                          </td>
-                          <td className="py-2.5">
-                            <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-[#131A2A] text-sky-300 border border-sky-500/20 whitespace-nowrap">
-                              {getSprintName(item.sprintId)}
-                            </span>
-                          </td>
-                          <td className="py-2.5">
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-mono font-medium border ${
-                                itemPriority === "Critical"
-                                  ? "bg-rose-500/20 text-rose-300 border-rose-500/30"
-                                  : itemPriority === "High"
-                                  ? "bg-amber-500/20 text-amber-300 border-amber-500/30"
-                                  : itemPriority === "Medium"
-                                  ? "bg-sky-500/20 text-sky-300 border-sky-500/30"
-                                  : "bg-slate-700/40 text-slate-300 border-slate-600/40"
-                              }`}
-                            >
-                              {itemPriority}
-                            </span>
-                          </td>
-                          <td className="py-2.5 text-slate-300">
-                            {getStakeholderName(item.assignedStakeholderId)}
-                          </td>
-                          <td className="py-2.5">
-                            {(() => {
-                              const statusCfg = getStatusConfig(item.status, statusConfigs);
-                              const blockedSec = getTotalBlockedSeconds(item);
-                              return (
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  <span
-                                    className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-medium border inline-flex items-center gap-1.5 ${statusCfg.badgeBg} ${statusCfg.badgeText} ${statusCfg.badgeBorder}`}
-                                  >
-                                    <span className={`w-1.5 h-1.5 rounded-full ${statusCfg.dotColor}`} />
-                                    <span>{statusCfg.label}</span>
-                                    <span className="opacity-80">({statusCfg.progressPercent}%)</span>
-                                  </span>
-
-                                  {item.status === "Blocked" && (
-                                    <span
-                                      className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse"
-                                      title={`Blocked duration: ${formatDurationSeconds(blockedSec)}`}
-                                    >
-                                      ⏱ {formatDurationSeconds(blockedSec)}
-                                    </span>
-                                  )}
-                                  {item.status !== "Blocked" && blockedSec > 0 && (
-                                    <span
-                                      className="px-1.5 py-0.5 rounded text-[9px] font-mono text-slate-400 bg-slate-800/60 border border-slate-700/50"
-                                      title={`Previously spent blocked: ${formatDurationSeconds(blockedSec)}`}
-                                    >
-                                      {formatDurationSeconds(blockedSec)} blocked
-                                    </span>
-                                  )}
-                                </div>
-                              );
-                            })()}
-                          </td>
-                          <td className="py-2.5 pr-3 text-right">
-                            {(() => {
-                              const statusCfg = getStatusConfig(item.status, statusConfigs);
-                              return (
-                                <span
-                                  className={`inline-block w-2.5 h-2.5 rounded-full ${statusCfg.dotColor} ${
-                                    item.status === "Blocked" ? "animate-pulse ring-2 ring-rose-500/40" : ""
-                                  }`}
-                                  title={`Status: ${statusCfg.label} (${statusCfg.progressPercent}% auto progress)`}
-                                />
-                              );
-                            })()}
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Work Package count & show more toggle */}
-            <div className="flex items-center justify-between pt-3 border-t border-[#1E293B] mt-3 text-xs text-slate-400 font-mono">
-              <span>
-                Showing {filteredWbsItems.length} of {matchingWbsItems.length} work packages
-                {selectedSprintObj && ` in ${selectedSprintObj.name}`}
-              </span>
-              {matchingWbsItems.length > 12 && (
-                <button
-                  type="button"
-                  onClick={() => setShowAllWbs(!showAllWbs)}
-                  className="text-sky-400 hover:text-sky-300 font-semibold cursor-pointer underline"
-                >
-                  {showAllWbs ? "Show Fewer (Top 12)" : `Show All ${matchingWbsItems.length} Packages`}
-                </button>
-              )}
-            </div>
-          </div>
+        {/* WBS Deliverables & Delivery Health (2 Cols on XL) - Visual Insights & Pacing */}
+        <div className="xl:col-span-2">
+          <WbsVisualDeliveryHealth
+            wbsItems={effectiveScopeWbsItems}
+            matchingWbsItems={matchingWbsItems}
+            stakeholders={stakeholders}
+            sprints={currentProjectSprints}
+            statusConfigs={statusConfigs}
+            activeProjectId={activeProjectId}
+            selectedSprintId={selectedSprintId}
+            onNavigateTab={onNavigateTab}
+            onRedirectToArea={onRedirectToArea}
+            onResetFilters={handleResetAllSmartFilters}
+            filtersActive={isSmartFilterActive}
+          />
         </div>
 
         {/* RAID Intelligence & Advisory (1 Col) */}
@@ -1842,6 +1823,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 };

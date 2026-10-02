@@ -301,7 +301,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* 2. CLICKUP HIERARCHY TREE PANEL (Home, Projects, Sprints) */}
         {/* ========================================================= */}
         {!isTreeCollapsed && (
-          <div className="w-64 bg-[#0C101A] border-r border-[#1C2337] flex flex-col h-full shrink-0 z-20">
+          <div className="w-64 max-w-[calc(100vw-4rem)] bg-[#0C101A] border-r border-[#1C2337] flex flex-col h-full shrink-0 z-20">
             {/* Header: Home + Quick Icons */}
             <div className="p-3 border-b border-[#1C2337] bg-[#0A0D16] flex items-center justify-between">
               <div className="flex items-center gap-2">

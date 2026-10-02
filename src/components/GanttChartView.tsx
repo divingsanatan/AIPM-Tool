@@ -851,7 +851,7 @@ export const GanttChartView: React.FC<GanttChartViewProps> = ({
 
       {/* Main Split-View Gantt Body */}
       <div
-        className={`flex border-t border-[#1E293B] bg-[#0A0E17] rounded-b-2xl relative overflow-hidden transition-all duration-300 ${
+        className={`flex border-t border-[#1E293B] bg-[#0A0E17] rounded-b-2xl relative overflow-hidden transition-all duration-300 min-w-0 ${
           isFullHeight
             ? "min-h-[750px] lg:min-h-[880px]"
             : "h-[540px] sm:h-[620px] lg:h-[700px]"
@@ -859,7 +859,7 @@ export const GanttChartView: React.FC<GanttChartViewProps> = ({
       >
         {/* Left Side: WBS Task List / Activity Pane */}
         {!isActivityPaneCollapsed && (
-          <div className="w-80 sm:w-96 border-r border-[#1E293B] bg-[#0A0E17] flex flex-col shrink-0 overflow-hidden">
+          <div className="w-[260px] xs:w-[300px] sm:w-80 md:w-96 max-w-[65vw] border-r border-[#1E293B] bg-[#0A0E17] flex flex-col shrink-0 overflow-hidden">
             {/* Activity Table Header */}
             <div className="h-[60px] border-b border-[#1E293B] bg-[#0E1322] px-3 flex items-center justify-between text-xs font-semibold text-slate-300 shrink-0">
               <div className="flex items-center gap-2">

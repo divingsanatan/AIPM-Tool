@@ -286,6 +286,23 @@ export default function App() {
     }
   };
 
+  const handleRedirectToArea = (tab: ActiveTab, params?: { projectId?: string; sprintId?: string | null }) => {
+    if (params?.projectId) {
+      setActiveProjectId(params.projectId);
+      saveActiveProjectId(params.projectId);
+    }
+    if (params?.sprintId !== undefined) {
+      setSelectedSprintId(params.sprintId);
+    }
+    setActiveTab(tab);
+    if (params?.projectId) {
+      const p = projects.find((proj) => proj.id === params.projectId);
+      showToast(`Switched to ${p?.name || params.projectId} · Navigated to ${tab.toUpperCase()}`);
+    } else {
+      showToast(`Navigated to ${tab.toUpperCase()} view`);
+    }
+  };
+
   const handleAddNewProject = (newProj: Project) => {
     let nextProjects: Project[] = [];
     setProjects((prev) => {
@@ -1247,12 +1264,17 @@ export default function App() {
           {activeTab === "dashboard" && (
             <DashboardView
               wbsItems={projectScopedWbsItems}
+              allWbsItems={wbsItems}
               stakeholders={projectScopedStakeholders}
+              allStakeholders={stakeholders}
               raidItems={projectScopedRaidItems}
+              allRaidItems={raidItems}
               changeRequests={projectScopedChangeRequests}
+              allChangeRequests={changeRequests}
               evmMetrics={projectScopedEvmMetrics}
               statusConfigs={statusConfigs}
               onNavigateTab={setActiveTab}
+              onRedirectToArea={handleRedirectToArea}
               onGenerateReportClick={(type) => {
                 setActiveTab("reports");
               }}
